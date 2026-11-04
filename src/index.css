@@ -1,0 +1,24 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+    --cres-orange: #F36F00;
+    --cres-green: #68A225;
+    --cres-cyan: #31B5D8;
+    --cres-yellow: #FDD000;
+    --cres-teal: #435B61;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    background-color: #FFFFFF;
+    color: #26383C;
+  }
+
+  table, .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}
