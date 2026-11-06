@@ -84,7 +84,7 @@ after(async () => {
   }
 });
 
-test('F12 & F13: Seed empty vs sample modes and honest cycle time when 0 applications finished', async () => {
+test('F12 & F13: Seed empty vs sample modes (17 accounts, 16 applications, C13 unsubmitted, DEMO_FULL_A/B/C T0 sync, and clean reset)', async () => {
   const adminToken = await loginAs('admin@cres.due.udn.vn');
 
   // 1. Seed empty mode -> 0 applications
@@ -97,22 +97,151 @@ test('F12 & F13: Seed empty vs sample modes and honest cycle time when 0 applica
   assert.equal(emptySeed.data.seededApplications, 0);
   assert.match(emptySeed.data.message, /0 hồ sơ/);
 
-  // 2. Dashboard stats with 0 applications -> avgCycleTimeHours is null (no hardcoded 1.6h or 0.5h floor)
+  // 2. Dashboard stats with 0 applications -> avgCycleTimeHours is null
   const statsEmpty = await api('/dashboard/stats', { token: adminToken });
   assert.equal(statsEmpty.status, 200);
   assert.equal(statsEmpty.data.totalApplications, 0);
   assert.equal(statsEmpty.data.metrics.avgCycleTimeHours, null);
   assert.equal(statsEmpty.data.metrics.finishedCount, 0);
-  assert.equal(statsEmpty.data.metrics.bimpExpectedCycleHours, undefined);
 
-  // 3. Seed sample mode -> 6 representative applications
+  // 3. Seed sample mode -> 17 candidate accounts and 16 submitted applications (C13 unsubmitted)
   const sampleSeed = await api('/admin/seed', {
     method: 'POST',
     token: adminToken,
     body: { mode: 'sample' },
   });
   assert.equal(sampleSeed.status, 200);
-  assert.equal(sampleSeed.data.seededApplications, 6);
+  assert.equal(sampleSeed.data.seededUsers, 17);
+  assert.equal(sampleSeed.data.seededApplications, 16);
+  assert.equal(sampleSeed.data.alreadySeeded, false);
+  const firstT0 = sampleSeed.data.t0Iso;
+  assert.ok(firstT0);
+
+  // Verify C13 has an account with CresDemo2026! but no submitted application yet
+  const c13Token = await loginAs('qa.cres.13@example.com', 'CresDemo2026!');
+  const c13Me = await api('/applications/me', { token: c13Token });
+  assert.equal(c13Me.status, 200);
+  assert.equal(c13Me.data.application, null);
+  assert.equal(c13Me.data.candidateDraft.full_name, 'TEST 13 Duc Son');
+
+  // Mutate C02 (submit supplement phone) to simulate in-progress testing
+  const c02Token = await loginAs('qa.cres.02@example.com', 'CresDemo2026!');
+  const c02MeBefore = await api('/applications/me', { token: c02Token });
+  assert.equal(c02MeBefore.data.application.phone, '');
+  assert.equal(c02MeBefore.data.application.status, 'needs_supplement');
+  const suppRes = await api(`/applications/${c02MeBefore.data.application.id}/supplement`, {
+    method: 'POST',
+    token: c02Token,
+    body: { phone: '0900000102' },
+  });
+  assert.equal(suppRes.status, 200);
+  assert.equal(suppRes.data.application.status, 'invited_to_book');
+
+  // 4. Clicking Seed sample again WITHOUT Reset must NOT overwrite progress or change T0
+  const secondSampleSeed = await api('/admin/seed', {
+    method: 'POST',
+    token: adminToken,
+    body: { mode: 'sample' },
+  });
+  assert.equal(secondSampleSeed.status, 200);
+  assert.equal(secondSampleSeed.data.alreadySeeded, true);
+  assert.equal(secondSampleSeed.data.seededUsers, 0);
+  assert.equal(secondSampleSeed.data.seededApplications, 0);
+  assert.equal(secondSampleSeed.data.t0Iso, firstT0);
+
+  const c02MeAfterRepeat = await api('/applications/me', { token: c02Token });
+  assert.equal(c02MeAfterRepeat.data.application.phone, '0900000102');
+  assert.equal(c02MeAfterRepeat.data.application.status, 'invited_to_book');
+
+  // 5. Reset back to empty -> 0 applications, removes sample candidate accounts
+  const resetAfterTest = await api('/admin/seed', {
+    method: 'POST',
+    token: adminToken,
+    body: { mode: 'empty' },
+  });
+  assert.equal(resetAfterTest.status, 200);
+  assert.equal(resetAfterTest.data.seededApplications, 0);
+
+  const demoAccountsAfterReset = await api('/auth/demo-accounts');
+  assert.equal(demoAccountsAfterReset.data.sampleCandidates.length, 0);
+
+  // 6. Seed sample again after Reset -> C02 phone is empty again, supplement_count is 0
+  const freshSampleAfterReset = await api('/admin/seed', {
+    method: 'POST',
+    token: adminToken,
+    body: { mode: 'sample' },
+  });
+  assert.equal(freshSampleAfterReset.status, 200);
+  assert.equal(freshSampleAfterReset.data.seededUsers, 17);
+  assert.equal(freshSampleAfterReset.data.seededApplications, 16);
+
+  const c02TokenFresh = await loginAs('qa.cres.02@example.com', 'CresDemo2026!');
+  const c02MeFresh = await api('/applications/me', { token: c02TokenFresh });
+  assert.equal(c02MeFresh.data.application.phone, '');
+  assert.equal(c02MeFresh.data.application.supplement_count, 0);
+  assert.equal(c02MeFresh.data.application.status, 'needs_supplement');
+
+  // Verify DEMO_FULL_A (cap 6, reserved 0, avail 6), DEMO_FULL_B (cap 6, reserved 4, avail 2), DEMO_FULL_C (cap 6, reserved 5, avail 1)
+  const c01Token = await loginAs('qa.cres.01@example.com', 'CresDemo2026!');
+  const c09Token = await loginAs('qa.cres.09@example.com', 'CresDemo2026!');
+  const c01Me = await api('/applications/me', { token: c01Token });
+  const c09Me = await api('/applications/me', { token: c09Token });
+
+  const slotsBefore = await api('/slots', { token: c01Token });
+  const slotA = slotsBefore.data.slots.find((s: { location_or_link: string }) => s.location_or_link === 'DEMO_FULL_A');
+  const slotB = slotsBefore.data.slots.find((s: { location_or_link: string }) => s.location_or_link === 'DEMO_FULL_B');
+  const slotC = slotsBefore.data.slots.find((s: { location_or_link: string }) => s.location_or_link === 'DEMO_FULL_C');
+
+  assert.equal(slotA.capacity, 6);
+  assert.equal(slotA.reserved_seats, 0);
+  assert.equal(slotA.booked_count, 0);
+  assert.equal(slotA.available_seats, 6);
+
+  assert.equal(slotB.capacity, 6);
+  assert.equal(slotB.reserved_seats, 4);
+  assert.equal(slotB.booked_count, 0);
+  assert.equal(slotB.available_seats, 2);
+
+  assert.equal(slotC.capacity, 6);
+  assert.equal(slotC.reserved_seats, 5);
+  assert.equal(slotC.booked_count, 0);
+  assert.equal(slotC.available_seats, 1);
+
+  // C01 books DEMO_FULL_C -> booked_count becomes 1, available_seats becomes 0
+  const bookC01 = await api(`/applications/${c01Me.data.application.id}/book`, {
+    method: 'POST',
+    token: c01Token,
+    body: { slotId: slotC.id },
+  });
+  assert.equal(bookC01.status, 200);
+
+  const slotsAfterBook = await api('/slots', { token: c09Token });
+  const slotCAfterBook = slotsAfterBook.data.slots.find((s: { id: string }) => s.id === slotC.id);
+  assert.equal(slotCAfterBook.capacity, 6);
+  assert.equal(slotCAfterBook.reserved_seats, 5);
+  assert.equal(slotCAfterBook.booked_count, 1);
+  assert.equal(slotCAfterBook.available_seats, 0);
+
+  // C09 attempts to book DEMO_FULL_C -> blocked with 400 even though capacity is 6!
+  const bookC09Blocked = await api(`/applications/${c09Me.data.application.id}/book`, {
+    method: 'POST',
+    token: c09Token,
+    body: { slotId: slotC.id },
+  });
+  assert.equal(bookC09Blocked.status, 400);
+
+  // C01 cancels booking -> returns 1 seat to DEMO_FULL_C (available_seats = 1)
+  const cancelC01 = await api(`/applications/${c01Me.data.application.id}/cancel-booking`, {
+    method: 'POST',
+    token: c01Token,
+  });
+  assert.equal(cancelC01.status, 200);
+  assert.equal(cancelC01.data.application.status, 'invited_to_book');
+
+  const slotsAfterCancel = await api('/slots', { token: c09Token });
+  const slotCAfterCancel = slotsAfterCancel.data.slots.find((s: { id: string }) => s.id === slotC.id);
+  assert.equal(slotCAfterCancel.booked_count, 0);
+  assert.equal(slotCAfterCancel.available_seats, 1);
 
   // Reset back to empty for subsequent deterministic tests
   await api('/admin/seed', {

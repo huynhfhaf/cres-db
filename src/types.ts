@@ -184,8 +184,10 @@ export interface InterviewSlot {
   end_at: string;
   location_or_link: string;
   capacity: number;
+  reserved_seats?: number;
   interviewer_ids: string[];
   booked_count?: number;
+  available_seats?: number;
   bookings?: Array<{
     booking_id: string;
     application_id: string;

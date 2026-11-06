@@ -24,6 +24,7 @@ import {
 import { NotificationService } from '../services/notificationService.ts';
 import {
   canBook,
+  computeSlotAvailableSeats,
   computeTotalScore,
   evaluateScreeningProfile,
   screenByThreshold,
@@ -36,7 +37,11 @@ import {
 } from '../rules/rulesEngine.ts';
 import { generateDepartmentAssignments } from '../services/aiAssignmentService.ts';
 import { runTimerTick } from '../jobs/timerScheduler.ts';
-import { seedDatabase } from '../db/seed.ts';
+import {
+  resetCurrentRoundToEmpty,
+  seedSample17Candidates,
+  QA_17_CANDIDATES,
+} from '../db/seed.ts';
 
 export const apiRouter = Router();
 
@@ -315,6 +320,7 @@ apiRouter.get('/auth/demo-accounts', (_req: Request, res: Response) => {
       FROM users u
       LEFT JOIN applications a ON a.user_id = u.id
       WHERE u.role = 'candidate'
+        AND (u.id != 'user-cand-default' OR a.id IS NOT NULL)
       ORDER BY COALESCE(a.created_at, u.created_at) DESC
     `)
     .all() as Array<User & { status: string; student_id: string }>;
@@ -434,7 +440,30 @@ apiRouter.get('/applications/me', requireAuth, (req: AuthenticatedRequest, res: 
     .get(req.user!.id) as Application | undefined;
 
   if (!app) {
-    return res.json({ application: null, auditLogs: [], notifications: [] });
+    const sampleDraft = QA_17_CANDIDATES.find(
+      (c) => c.email.toLowerCase() === req.user!.email.toLowerCase()
+    );
+    return res.json({
+      application: null,
+      candidateDraft: sampleDraft
+        ? {
+            full_name: sampleDraft.full_name,
+            student_id: sampleDraft.student_id,
+            class_name: sampleDraft.class_name,
+            email: sampleDraft.email,
+            phone: sampleDraft.phone,
+            first_choice_dept_id: sampleDraft.first_choice_dept_id,
+            second_choice_dept_id: sampleDraft.second_choice_dept_id,
+            experience: sampleDraft.experience,
+            essay: sampleDraft.essay,
+            cv_url: sampleDraft.cv_url,
+            commitment_confirmed: sampleDraft.commitment_confirmed,
+            is_active_student: sampleDraft.is_active_student,
+          }
+        : null,
+      auditLogs: [],
+      notifications: [],
+    });
   }
 
   const enriched = enrichApplication(app);
@@ -962,7 +991,9 @@ apiRouter.get('/slots', requireAuth, (req: AuthenticatedRequest, res: Response) 
   }
 
   const rawSlots = db
-    .prepare('SELECT * FROM interview_slots WHERE round_id = ? ORDER BY start_at ASC')
+    .prepare(
+      'SELECT id, round_id, start_at, end_at, location_or_link, capacity, COALESCE(reserved_seats, 0) as reserved_seats, interviewer_ids FROM interview_slots WHERE round_id = ? ORDER BY start_at ASC'
+    )
     .all(round.id) as Array<{
     id: string;
     round_id: string;
@@ -970,6 +1001,7 @@ apiRouter.get('/slots', requireAuth, (req: AuthenticatedRequest, res: Response) 
     end_at: string;
     location_or_link: string;
     capacity: number;
+    reserved_seats: number;
     interviewer_ids: string;
   }>;
 
@@ -1016,10 +1048,16 @@ apiRouter.get('/slots', requireAuth, (req: AuthenticatedRequest, res: Response) 
       ? bookings.filter((b) => b.user_id === req.user!.id)
       : bookings;
 
+    const reservedSeats = Math.max(0, Number(s.reserved_seats || 0));
+    const bookedCount = bookings.length;
+    const availableSeats = computeSlotAvailableSeats(s.capacity, bookedCount, reservedSeats);
+
     return {
       ...s,
+      reserved_seats: reservedSeats,
       interviewer_ids: JSON.parse(s.interviewer_ids || '[]'),
-      booked_count: bookings.length,
+      booked_count: bookedCount,
+      available_seats: availableSeats,
       bookings: visibleBookings.map(({ user_id: _uid, ...b }) => ({
         ...b,
         first_choice_name: deptMap.get(b.first_choice_dept_id) || '',
@@ -1047,6 +1085,7 @@ const createSlotSchema = z.object({
   end_at: z.string().min(10, 'Thời gian kết thúc không hợp lệ'),
   location_or_link: z.string().min(3, 'Vui lòng nhập phòng hoặc link phỏng vấn'),
   capacity: z.number().int().min(1, 'Sức chứa tối thiểu là 1').max(50, 'Sức chứa tối đa là 50'),
+  reserved_seats: z.number().int().min(0, 'Ghế dự trữ không hợp lệ').optional(),
   interviewer_ids: z.array(z.string()).optional(),
 });
 
@@ -1058,12 +1097,20 @@ apiRouter.post(
     const parsed = createSlotSchema.safeParse({
       ...req.body,
       capacity: Number(req.body?.capacity),
+      reserved_seats:
+        req.body?.reserved_seats !== undefined ? Number(req.body.reserved_seats) : 0,
     });
     if (!parsed.success) {
       return res.status(400).json({ error: parsed.error.issues[0]?.message || 'Dữ liệu khung giờ không hợp lệ' });
     }
 
-    const { start_at, end_at, location_or_link, capacity, interviewer_ids } = parsed.data;
+    const { start_at, end_at, location_or_link, capacity, reserved_seats = 0, interviewer_ids } = parsed.data;
+    if (reserved_seats >= capacity) {
+      return res.status(400).json({
+        error: 'Số ghế dự trữ phải nhỏ hơn tổng sức chứa của ca phỏng vấn.',
+      });
+    }
+
     const startDate = parseSlotDateTime(start_at);
     const endDate = parseSlotDateTime(end_at);
 
@@ -1084,8 +1131,8 @@ apiRouter.post(
     const nowIso = getSystemNowIso();
 
     db.prepare(`
-      INSERT INTO interview_slots (id, round_id, start_at, end_at, location_or_link, capacity, interviewer_ids, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO interview_slots (id, round_id, start_at, end_at, location_or_link, capacity, reserved_seats, interviewer_ids, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       round.id,
@@ -1093,6 +1140,7 @@ apiRouter.post(
       endDate.toISOString(),
       sanitizeText(location_or_link),
       capacity,
+      reserved_seats,
       JSON.stringify(interviewer_ids || [req.user!.id]),
       nowIso,
       nowIso
@@ -1108,8 +1156,9 @@ apiRouter.post(
         end_at: endDate.toISOString(),
         location_or_link,
         capacity,
+        reserved_seats,
       },
-      result: `BCN (${req.user!.full_name}) đã tạo khung giờ phỏng vấn tại ${location_or_link} (Sức chứa: ${capacity}).`,
+      result: `BCN (${req.user!.full_name}) đã tạo khung giờ phỏng vấn tại ${location_or_link} (Sức chứa: ${capacity}, Dự trữ: ${reserved_seats}).`,
       createdAt: nowIso,
     });
 
@@ -1120,6 +1169,9 @@ apiRouter.post(
       end_at: endDate.toISOString(),
       location_or_link: sanitizeText(location_or_link),
       capacity,
+      reserved_seats,
+      booked_count: 0,
+      available_seats: computeSlotAvailableSeats(capacity, 0, reserved_seats),
     };
 
     return res.status(201).json({
@@ -1162,8 +1214,19 @@ apiRouter.post('/applications/:id/book', requireAuth, (req: AuthenticatedRequest
   }
 
   const slot = db
-    .prepare('SELECT * FROM interview_slots WHERE id = ?')
-    .get(slotId) as { id: string; capacity: number; start_at: string; end_at: string; location_or_link: string } | undefined;
+    .prepare(
+      'SELECT id, capacity, COALESCE(reserved_seats, 0) as reserved_seats, start_at, end_at, location_or_link FROM interview_slots WHERE id = ?'
+    )
+    .get(slotId) as
+    | {
+        id: string;
+        capacity: number;
+        reserved_seats: number;
+        start_at: string;
+        end_at: string;
+        location_or_link: string;
+      }
+    | undefined;
 
   if (!slot) {
     return res.status(404).json({ error: 'Khung giờ phỏng vấn không tồn tại.' });
@@ -1186,11 +1249,16 @@ apiRouter.post('/applications/:id/book', requireAuth, (req: AuthenticatedRequest
     return res.status(400).json({ error: 'Bạn đã check-in phỏng vấn nên không thể đổi khung giờ.' });
   }
 
+  const reservedSeats = Math.max(0, Number(slot.reserved_seats || 0));
+  const availableSeats = computeSlotAvailableSeats(slot.capacity, bookedCntRow.cnt, reservedSeats);
+
   const check = canBook(
     {
       id: slot.id,
       capacity: slot.capacity,
       booked_count: bookedCntRow.cnt,
+      reserved_seats: reservedSeats,
+      available_seats: availableSeats,
       start_at: slot.start_at,
     },
     existingBooking?.slot_id || null,
@@ -1219,13 +1287,17 @@ apiRouter.post('/applications/:id/book', requireAuth, (req: AuthenticatedRequest
     nextStatus: 'booked',
     actor: `user:${req.user!.id}`,
     action: existingBooking ? 'RESCHEDULE_INTERVIEW_SLOT' : 'BOOK_INTERVIEW_SLOT',
-    ruleApplied: `canBook(slot=${slot.id}, booked=${bookedCntRow.cnt}/${slot.capacity}) -> Cancel 1d/2d unbooked timers`,
+    ruleApplied: `canBook(slot=${slot.id}, booked=${bookedCntRow.cnt}, reserved=${reservedSeats}, capacity=${slot.capacity}, availableAfter=${availableSeats - 1}) -> Cancel 1d/2d unbooked timers`,
     inputSnapshot: {
       slotId: slot.id,
       startAt: slot.start_at,
       location: slot.location_or_link,
+      capacity: slot.capacity,
+      reservedSeats,
+      bookedBefore: bookedCntRow.cnt,
+      availableAfter: Math.max(0, availableSeats - 1),
     },
-    resultText: `Đã đặt lịch phỏng vấn thành công (${new Date(slot.start_at).toLocaleString('vi-VN')} - ${slot.location_or_link}).`,
+    resultText: `Đã đặt lịch phỏng vấn thành công (${new Date(slot.start_at).toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })} - ${slot.location_or_link}).`,
     extraColumns: {
       schedule_deadline_at: null,
     },
@@ -1234,6 +1306,73 @@ apiRouter.post('/applications/:id/book', requireAuth, (req: AuthenticatedRequest
 
   return res.json({ application: enrichApplication(updated) });
 });
+
+// Cancel an existing interview booking before check-in (returns 1 available seat to the slot)
+const handleCancelBooking = (req: AuthenticatedRequest, res: Response) => {
+  const app = db
+    .prepare('SELECT * FROM applications WHERE id = ?')
+    .get(req.params.id) as Application | undefined;
+
+  if (!app) {
+    return res.status(404).json({ error: 'Không tìm thấy hồ sơ.' });
+  }
+  if (req.user!.role === 'candidate' && app.user_id !== req.user!.id) {
+    return res.status(403).json({ error: 'Bạn chỉ được hủy lịch phỏng vấn của chính mình.' });
+  }
+  if (app.status !== 'booked') {
+    return res.status(400).json({ error: 'Hồ sơ hiện không có lịch phỏng vấn đang chờ để hủy.' });
+  }
+
+  const existingBooking = db
+    .prepare('SELECT * FROM interview_bookings WHERE application_id = ?')
+    .get(app.id) as { id: string; slot_id: string; checked_in_at: string | null } | undefined;
+
+  if (!existingBooking) {
+    return res.status(400).json({ error: 'Không tìm thấy thông tin đặt lịch phỏng vấn.' });
+  }
+  if (existingBooking.checked_in_at) {
+    return res.status(400).json({ error: 'Bạn đã check-in phỏng vấn nên không thể hủy lịch.' });
+  }
+
+  const slot = db
+    .prepare('SELECT id, location_or_link, start_at FROM interview_slots WHERE id = ?')
+    .get(existingBooking.slot_id) as { id: string; location_or_link: string; start_at: string } | undefined;
+
+  const round = db
+    .prepare('SELECT * FROM recruitment_rounds WHERE id = ?')
+    .get(app.round_id) as RecruitmentRound;
+
+  const now = getSystemNow();
+  const nowIso = now.toISOString();
+  const baseSentMs = app.schedule_link_sent_at ? new Date(app.schedule_link_sent_at).getTime() : now.getTime();
+  const restoredDeadlineIso = new Date(
+    Math.max(now.getTime() + 3600 * 1000, baseSentMs + round.unbook_after_days * 24 * 3600 * 1000)
+  ).toISOString();
+
+  db.prepare('DELETE FROM interview_bookings WHERE id = ?').run(existingBooking.id);
+
+  const updated = transition({
+    applicationId: app.id,
+    nextStatus: 'invited_to_book',
+    actor: `user:${req.user!.id}`,
+    action: 'CANCEL_INTERVIEW_BOOKING',
+    ruleApplied: 'Cancel Booking Before Check-in -> Return 1 Open Seat to Slot & Restore Booking State',
+    inputSnapshot: {
+      cancelledSlotId: existingBooking.slot_id,
+      cancelledSlotLocation: slot?.location_or_link || '',
+    },
+    resultText: `Đã hủy đặt lịch tại ca ${slot?.location_or_link || existingBooking.slot_id} và hoàn trả 1 chỗ trống cho ca phỏng vấn.`,
+    extraColumns: {
+      schedule_deadline_at: restoredDeadlineIso,
+    },
+    timestampIso: nowIso,
+  });
+
+  return res.json({ application: enrichApplication(updated) });
+};
+
+apiRouter.post('/applications/:id/cancel-booking', requireAuth, handleCancelBooking);
+apiRouter.delete('/applications/:id/book', requireAuth, handleCancelBooking);
 
 // Step 9a (AND branch 1): Candidate Check-in at Interview
 apiRouter.post('/applications/:id/check-in', requireAuth, (req: AuthenticatedRequest, res: Response) => {
@@ -2661,23 +2800,59 @@ apiRouter.post(
   requireAuth,
   requireRole('admin', 'hr', 'board'),
   (req: AuthenticatedRequest, res: Response) => {
+    if (!isDemoModeEnabled()) {
+      return res.status(403).json({
+        error: 'Chức năng nạp/đặt lại dữ liệu mẫu chỉ được phép sử dụng trong chế độ Demo.',
+      });
+    }
+
     const withSample = req.body?.mode === 'sample' || req.body?.withSample === true;
-    const result = seedDatabase(true, withSample);
-    const msg = withSample
-      ? `Đã nạp lại dữ liệu mẫu thành công (${result.seededApplications} hồ sơ ứng viên).`
-      : 'Đã đặt lại đợt tuyển trống thành công (0 hồ sơ ứng viên).';
+
+    if (!withSample) {
+      const result = resetCurrentRoundToEmpty();
+      const msg =
+        'Đã đặt lại đợt tuyển trống thành công (0 hồ sơ ứng viên). Đã xóa dữ liệu xử lý của lượt kiểm thử trước và giữ nguyên cấu hình, chỉ tiêu các ban cùng các ca phỏng vấn.';
+
+      writeAuditLog({
+        applicationId: null,
+        actor: `user:${req.user!.id}`,
+        action: 'ADMIN_RESEED_DATABASE',
+        ruleApplied: 'Reset Current Demo Recruitment Round to 0 Applications (Preserve Config & Slots)',
+        inputSnapshot: result,
+        result: msg,
+        createdAt: getSystemNowIso(),
+      });
+
+      return res.json({
+        message: msg,
+        ...result,
+        systemNow: getSystemNowIso(),
+      });
+    }
+
+    const result = seedSample17Candidates();
+    const msg = result.alreadySeeded
+      ? `Bộ dữ liệu mẫu đã có trên hệ thống (tạo mới ${result.seededUsers} tài khoản, ${result.seededApplications} đơn ứng tuyển — giữ nguyên ${result.totalSampleUsers} tài khoản ứng viên mẫu, ${result.totalApplications} đơn hiện có, mốc T0 và tiến trình đang kiểm thử). Muốn làm lại từ đầu, vui lòng bấm "Đặt lại đợt tuyển trống (0 hồ sơ)" trước.`
+      : `Đã nạp dữ liệu mẫu thành công: tạo mới ${result.seededUsers} tài khoản ứng viên (C01–C17) và nộp ${result.seededApplications} đơn ứng tuyển (riêng C13 chỉ tạo tài khoản, chưa nộp đơn).`;
 
     writeAuditLog({
       applicationId: null,
       actor: `user:${req.user!.id}`,
       action: 'ADMIN_RESEED_DATABASE',
-      ruleApplied: withSample
-        ? 'Reset & Seed Sample Dataset (6 Representative Cases)'
-        : 'Reset Recruitment Round to Clean State (0 Applications)',
-      inputSnapshot: result,
+      ruleApplied: result.alreadySeeded
+        ? 'Sample Dataset Already Present (Idempotent No-Overwrite Guard)'
+        : 'Seed 17 QA Sample Candidates (17 Accounts, 16 Submitted Applications, C13 Account-Only)',
+      inputSnapshot: {
+        roundId: result.roundId,
+        seededUsers: result.seededUsers,
+        seededApplications: result.seededApplications,
+        alreadySeeded: result.alreadySeeded,
+        t0Iso: result.t0Iso,
+      },
       result: msg,
       createdAt: getSystemNowIso(),
     });
+
     return res.json({
       message: msg,
       ...result,

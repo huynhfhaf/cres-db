@@ -2,18 +2,15 @@ import 'dotenv/config';
 import express from 'express';
 import path from 'path';
 import { initDatabase } from './server/db/database.ts';
-import { seedDatabase, ensureQa17CandidatesSeeded } from './server/db/seed.ts';
+import { seedDatabase } from './server/db/seed.ts';
 import { apiRouter } from './server/routes/api.ts';
 import { startBackgroundScheduler } from './server/jobs/timerScheduler.ts';
 
 async function startServer() {
-  // 1. Initialize SQLite schema & auto-seed on first run
+  // 1. Initialize SQLite schema & auto-seed base structure on first run (no sample candidates auto-seeded)
   initDatabase();
   const seedInfo = seedDatabase(false);
-  const qaSeed = ensureQa17CandidatesSeeded();
-  console.log(
-    `[C-res Recruit] Database ready (Round: ${seedInfo.roundId}, QA17 created: ${qaSeed.createdApplications}, existing: ${qaSeed.existingApplications})`
-  );
+  console.log(`[C-res Recruit] Database ready (Round: ${seedInfo.roundId}, Cases: ${seedInfo.seededApplications})`);
 
   // 2. Start background timer scheduler (2-day supplement, 1-day reminder, 2-day unbook)
   startBackgroundScheduler();

@@ -228,17 +228,45 @@ export function computeTotalScore(
 }
 
 /**
+ * Pure function: Computes available seats on an interview slot.
+ * Formula: Chỗ trống = Tổng sức chứa − Booking đang giữ chỗ − Ghế dự trữ.
+ */
+export function computeSlotAvailableSeats(
+  capacity: number,
+  bookedCount: number,
+  reservedSeats: number = 0
+): number {
+  const cap = Math.max(0, Number(capacity) || 0);
+  const booked = Math.max(0, Number(bookedCount) || 0);
+  const reserved = Math.max(0, Number(reservedSeats) || 0);
+  return Math.max(0, cap - booked - reserved);
+}
+
+/**
  * Pure function: Checks if an interview slot can be booked by a candidate.
  */
 export function canBook(
-  slot: { id: string; capacity: number; booked_count: number; start_at: string },
+  slot: {
+    id: string;
+    capacity: number;
+    booked_count: number;
+    reserved_seats?: number;
+    available_seats?: number;
+    start_at: string;
+  },
   existingBookingSlotId: string | null,
   nowIso: string
 ): { allowed: boolean; reason?: string } {
   if (existingBookingSlotId === slot.id) {
     return { allowed: false, reason: 'Bạn đã đặt khung giờ này rồi.' };
   }
-  if (slot.booked_count >= slot.capacity) {
+  const reserved = Math.max(0, Number(slot.reserved_seats ?? 0));
+  const available =
+    slot.available_seats !== undefined
+      ? Number(slot.available_seats)
+      : computeSlotAvailableSeats(slot.capacity, slot.booked_count, reserved);
+
+  if (available <= 0 || slot.booked_count + reserved >= slot.capacity) {
     return { allowed: false, reason: 'Khung giờ phỏng vấn này đã hết chỗ.' };
   }
   if (new Date(slot.start_at).getTime() <= new Date(nowIso).getTime()) {
@@ -356,7 +384,7 @@ export const ALLOWED_TRANSITIONS: Record<ApplicationStatus, ApplicationStatus[]>
   review_fail: ['rejected_docs', 'withdrawn'],
   rejected_docs: [],
   invited_to_book: ['booked', 'no_booking', 'withdrawn'],
-  booked: ['interviewing', 'scored', 'withdrawn'],
+  booked: ['invited_to_book', 'interviewing', 'scored', 'withdrawn'],
   no_booking: [],
   interviewing: ['scored', 'withdrawn'],
   scored: ['decided_pass', 'decided_fail', 'withdrawn'],

@@ -112,6 +112,7 @@ CREATE TABLE IF NOT EXISTS interview_slots (
   end_at TEXT NOT NULL,
   location_or_link TEXT NOT NULL,
   capacity INTEGER NOT NULL,
+  reserved_seats INTEGER NOT NULL DEFAULT 0,
   interviewer_ids TEXT NOT NULL DEFAULT '[]',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL

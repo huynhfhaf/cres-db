@@ -111,6 +111,11 @@ export function CandidatePortal({
           experience: a.experience || '',
           essay: a.essay || '',
         });
+      } else if (meRes.candidateDraft) {
+        setFormData((prev) => ({
+          ...prev,
+          ...meRes.candidateDraft,
+        }));
       }
     } catch (err) {
       setFeedback({
@@ -211,6 +216,30 @@ export function CandidatePortal({
       setFeedback({
         type: 'error',
         text: err instanceof Error ? err.message : 'Khung giờ này hiện không thể chọn, bạn vui lòng chọn khung giờ khác nhé',
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleCancelBooking = async () => {
+    if (!app) return;
+    setSubmitting(true);
+    setFeedback(null);
+    try {
+      await apiRequest(`/applications/${app.id}/cancel-booking`, {
+        method: 'POST',
+      });
+      setFeedback({
+        type: 'success',
+        text: 'Đã hủy lịch phỏng vấn đã chọn và hoàn trả 1 chỗ trống cho ca phỏng vấn. Bạn có thể chọn lại khung giờ khác.',
+      });
+      await loadMyData();
+      onRefreshGlobal();
+    } catch (err) {
+      setFeedback({
+        type: 'error',
+        text: err instanceof Error ? err.message : 'Chưa thể hủy lịch phỏng vấn lúc này',
       });
     } finally {
       setSubmitting(false);
@@ -792,7 +821,7 @@ export function CandidatePortal({
                 )}
               </div>
 
-              {/* Current Booking Banner + Check-in Button */}
+              {/* Current Booking Banner + Check-in / Cancel Booking Buttons */}
               {app.booking && (
                 <div className="bg-blue-50/70 border border-blue-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                   <div className="space-y-1">
@@ -820,90 +849,113 @@ export function CandidatePortal({
                     </div>
                   </div>
                   {!app.booking.checked_in_at && (
-                    <button
-                      type="button"
-                      disabled={submitting}
-                      onClick={handleCheckIn}
-                      className="inline-flex items-center gap-2 px-5 py-2.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors whitespace-nowrap shrink-0"
-                    >
-                      <UserCheck className="w-4 h-4" />
-                      Điểm danh tham gia phỏng vấn
-                    </button>
+                    <div className="flex flex-wrap items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        disabled={submitting}
+                        onClick={handleCancelBooking}
+                        className="inline-flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-100 border border-slate-300 rounded-lg transition-colors whitespace-nowrap"
+                      >
+                        <XCircle className="w-4 h-4 text-slate-500" />
+                        Hủy đặt lịch
+                      </button>
+                      <button
+                        type="button"
+                        disabled={submitting}
+                        onClick={handleCheckIn}
+                        className="inline-flex items-center gap-2 px-5 py-2.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors whitespace-nowrap"
+                      >
+                        <UserCheck className="w-4 h-4" />
+                        Điểm danh tham gia phỏng vấn
+                      </button>
+                    </div>
                   )}
                 </div>
               )}
 
               {/* Available Interview Slots Grid */}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3.5">
-                {slots
-                  .filter((s) => (s.booked_count || 0) < s.capacity || app.booking?.slot_id === s.id)
-                  .map((slot) => {
-                    const isMySlot = app.booking?.slot_id === slot.id;
-                    const bookedCnt = slot.booked_count || 0;
-                    const rem = Math.max(0, slot.capacity - bookedCnt);
-                    const isPast = new Date(slot.start_at).getTime() <= new Date(systemNow).getTime();
+                {slots.map((slot) => {
+                  const isMySlot = app.booking?.slot_id === slot.id;
+                  const bookedCnt = slot.booked_count || 0;
+                  const reservedCnt = slot.reserved_seats || 0;
+                  const rem =
+                    slot.available_seats !== undefined
+                      ? slot.available_seats
+                      : Math.max(0, slot.capacity - bookedCnt - reservedCnt);
+                  const isFull = rem <= 0;
+                  const isPast = new Date(slot.start_at).getTime() <= new Date(systemNow).getTime();
 
-                    return (
-                      <div
-                        key={slot.id}
-                        className={`p-4 rounded-xl border flex flex-col justify-between gap-3 ${
-                          isMySlot
-                            ? 'bg-blue-50/60 border-blue-400'
-                            : isPast
-                            ? 'bg-slate-50 border-slate-200 opacity-65'
-                            : 'bg-white border-slate-200 hover:border-blue-300'
-                        }`}
-                      >
-                        <div className="space-y-1.5">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-xs font-mono font-semibold text-slate-900 tabular-nums">
-                              {new Date(slot.start_at).toLocaleDateString('vi-VN', {
-                                timeZone: 'Asia/Ho_Chi_Minh',
-                              })}
-                            </span>
-                            <span className="text-xs font-mono text-blue-700 font-semibold tabular-nums">
-                              Còn {rem}/{slot.capacity} chỗ
-                            </span>
-                          </div>
-                          <div className="text-sm font-bold text-slate-900 tabular-nums">
-                            {new Date(slot.start_at).toLocaleTimeString('vi-VN', {
-                              hour: '2-digit',
-                              minute: '2-digit',
-                              timeZone: 'Asia/Ho_Chi_Minh',
-                            })}{' '}
-                            –{' '}
-                            {new Date(slot.end_at).toLocaleTimeString('vi-VN', {
-                              hour: '2-digit',
-                              minute: '2-digit',
+                  return (
+                    <div
+                      key={slot.id}
+                      className={`p-4 rounded-xl border flex flex-col justify-between gap-3 ${
+                        isMySlot
+                          ? 'bg-blue-50/60 border-blue-400'
+                          : isPast || isFull
+                          ? 'bg-slate-50 border-slate-200 opacity-75'
+                          : 'bg-white border-slate-200 hover:border-blue-300'
+                      }`}
+                    >
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-mono font-semibold text-slate-900 tabular-nums">
+                            {new Date(slot.start_at).toLocaleDateString('vi-VN', {
                               timeZone: 'Asia/Ho_Chi_Minh',
                             })}
-                          </div>
-                          <div className="text-xs text-slate-600">{slot.location_or_link}</div>
+                          </span>
+                          <span
+                            className={`text-xs font-mono font-semibold tabular-nums ${
+                              isFull && !isMySlot ? 'text-red-600' : 'text-blue-700'
+                            }`}
+                          >
+                            Còn {rem}/{slot.capacity} chỗ
+                          </span>
                         </div>
-
-                        <button
-                          type="button"
-                          disabled={submitting || isMySlot || isPast || Boolean(app.booking?.checked_in_at)}
-                          onClick={() => handleBookSlot(slot.id)}
-                          className={`w-full py-2 px-3 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap ${
-                            isMySlot
-                              ? 'bg-emerald-600 text-white cursor-default'
-                              : isPast
-                              ? 'bg-slate-200 text-slate-500 cursor-not-allowed'
-                              : 'bg-blue-600 hover:bg-blue-700 text-white'
-                          }`}
-                        >
-                          {isMySlot
-                            ? 'Đã chọn khung giờ này'
-                            : isPast
-                            ? 'Đã qua giờ bắt đầu'
-                            : app.booking
-                            ? 'Đổi sang khung giờ này'
-                            : 'Chọn khung giờ này'}
-                        </button>
+                        <div className="text-sm font-bold text-slate-900 tabular-nums">
+                          {new Date(slot.start_at).toLocaleTimeString('vi-VN', {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            timeZone: 'Asia/Ho_Chi_Minh',
+                          })}{' '}
+                          –{' '}
+                          {new Date(slot.end_at).toLocaleTimeString('vi-VN', {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            timeZone: 'Asia/Ho_Chi_Minh',
+                          })}
+                        </div>
+                        <div className="text-xs text-slate-600">{slot.location_or_link}</div>
+                        <div className="text-[11px] font-mono text-slate-500 pt-1 border-t border-slate-100 tabular-nums">
+                          Đã đặt: {bookedCnt} · Dự trữ: {reservedCnt} · Trống: {rem}
+                        </div>
                       </div>
-                    );
-                  })}
+
+                      <button
+                        type="button"
+                        disabled={submitting || isMySlot || isPast || isFull || Boolean(app.booking?.checked_in_at)}
+                        onClick={() => handleBookSlot(slot.id)}
+                        className={`w-full py-2 px-3 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap ${
+                          isMySlot
+                            ? 'bg-emerald-600 text-white cursor-default'
+                            : isPast || isFull
+                            ? 'bg-slate-200 text-slate-500 cursor-not-allowed'
+                            : 'bg-blue-600 hover:bg-blue-700 text-white'
+                        }`}
+                      >
+                        {isMySlot
+                          ? 'Đã chọn khung giờ này'
+                          : isPast
+                          ? 'Đã qua giờ bắt đầu'
+                          : isFull
+                          ? 'Đã hết chỗ trống'
+                          : app.booking
+                          ? 'Đổi sang khung giờ này'
+                          : 'Chọn khung giờ này'}
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}

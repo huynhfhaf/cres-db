@@ -873,10 +873,16 @@ export function BoardPortal({ onRefreshGlobal }: BoardPortalProps) {
                 PENDING_SCORING_STATUSES.includes(b.status)
               );
               const finishedSlotCount = allSlotBookings.length - pendingSlotBookings.length;
+              const bookedCnt = slot.booked_count || 0;
+              const reservedCnt = slot.reserved_seats || 0;
+              const availCnt =
+                slot.available_seats !== undefined
+                  ? slot.available_seats
+                  : Math.max(0, slot.capacity - bookedCnt - reservedCnt);
 
               return (
                 <div key={slot.id} className="bg-white border border-slate-200 rounded-xl p-5 space-y-3">
-                  <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
                     <div>
                       <div className="text-sm font-bold text-slate-900 tabular-nums">
                         {new Date(slot.start_at).toLocaleString('vi-VN', {
@@ -890,9 +896,12 @@ export function BoardPortal({ onRefreshGlobal }: BoardPortalProps) {
                         })}
                       </div>
                       <div className="text-xs text-slate-600 mt-0.5">{slot.location_or_link}</div>
+                      <div className="text-[11px] font-mono text-slate-500 mt-0.5 tabular-nums">
+                        Tổng: {slot.capacity} ghế · Đã đặt: {bookedCnt} · Dự trữ: {reservedCnt} · Trống: {availCnt}
+                      </div>
                     </div>
                     <span className="px-2.5 py-1 bg-orange-50 border border-orange-200 rounded-lg text-xs font-mono font-bold text-[#F36F00] tabular-nums">
-                      Chờ chấm: {pendingSlotBookings.length} · Tổng đặt: {slot.booked_count || 0}/{slot.capacity}
+                      Còn {availCnt}/{slot.capacity} chỗ · Chờ chấm: {pendingSlotBookings.length}
                     </span>
                   </div>
 

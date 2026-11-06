@@ -153,8 +153,8 @@ export function DashboardAndAdmin({ mode, onRefreshGlobal }: DashboardAndAdminPr
         text:
           res.message ||
           (seedMode === 'sample'
-            ? 'Đã nạp dữ liệu mẫu thành công!'
-            : 'Đã đặt lại đợt tuyển về trạng thái trống (0 hồ sơ)!'),
+            ? `Đã nạp dữ liệu mẫu thành công (${res.seededUsers ?? 17} tài khoản, ${res.seededApplications ?? 16} đơn ứng tuyển)!`
+            : 'Đã đặt lại đợt tuyển trống thành công (0 hồ sơ)!'),
       });
       await loadAll();
       onRefreshGlobal();
@@ -291,7 +291,7 @@ export function DashboardAndAdmin({ mode, onRefreshGlobal }: DashboardAndAdminPr
                 className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-[#1E293B] bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-lg transition-colors whitespace-nowrap"
               >
                 <RotateCcw className="w-3.5 h-3.5 text-[#F36F00]" />
-                Nạp dữ liệu mẫu (6 hồ sơ)
+                Nạp dữ liệu mẫu (17 ứng viên)
               </button>
             </>
           ) : (
@@ -299,7 +299,7 @@ export function DashboardAndAdmin({ mode, onRefreshGlobal }: DashboardAndAdminPr
               <span className="font-semibold text-amber-950">
                 {confirmSeedMode === 'empty'
                   ? 'Xác nhận xóa hết hồ sơ (về 0)?'
-                  : 'Xác nhận nạp lại 6 hồ sơ mẫu?'}
+                  : 'Xác nhận nạp dữ liệu mẫu (17 ứng viên)?'}
               </span>
               <button
                 type="button"

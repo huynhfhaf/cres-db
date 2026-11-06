@@ -109,6 +109,7 @@ export function initDatabase() {
       end_at TEXT NOT NULL,
       location_or_link TEXT NOT NULL,
       capacity INTEGER NOT NULL,
+      reserved_seats INTEGER NOT NULL DEFAULT 0,
       interviewer_ids TEXT NOT NULL DEFAULT '[]',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
@@ -200,6 +201,64 @@ export function initDatabase() {
       updated_at TEXT NOT NULL
     );
   `);
+
+  const slotCols = db.prepare("PRAGMA table_info('interview_slots')").all() as Array<{ name: string }>;
+  if (!slotCols.some((c) => c.name === 'reserved_seats')) {
+    db.exec('ALTER TABLE interview_slots ADD COLUMN reserved_seats INTEGER NOT NULL DEFAULT 0');
+  }
+
+  migrateDemoFullSlotsReservedSeats();
+}
+
+/**
+ * Ensures DEMO_FULL_A, DEMO_FULL_B, DEMO_FULL_C each have total capacity = 6 while preserving
+ * their actual remaining available seats at the time of migration:
+ *   reserved_seats = 6 - active_bookings - current_remaining_seats
+ */
+export function migrateDemoFullSlotsReservedSeats() {
+  const demoSlots = db
+    .prepare(`
+      SELECT id, location_or_link, capacity, COALESCE(reserved_seats, 0) as reserved_seats
+      FROM interview_slots
+      WHERE location_or_link IN ('DEMO_FULL_A', 'DEMO_FULL_B', 'DEMO_FULL_C')
+         OR id IN ('slot-demo-full-a', 'slot-demo-full-b', 'slot-demo-full-c')
+    `)
+    .all() as Array<{
+    id: string;
+    location_or_link: string;
+    capacity: number;
+    reserved_seats: number;
+  }>;
+
+  if (demoSlots.length === 0) return;
+
+  const countActiveBookings = db.prepare(`
+    SELECT COUNT(*) as cnt
+    FROM interview_bookings b
+    JOIN applications a ON a.id = b.application_id
+    WHERE b.slot_id = ? AND a.status != 'withdrawn'
+  `);
+
+  const updateSlot = db.prepare(`
+    UPDATE interview_slots
+    SET capacity = 6, reserved_seats = ?
+    WHERE id = ?
+  `);
+
+  const tx = db.transaction(() => {
+    for (const s of demoSlots) {
+      const bookedRow = countActiveBookings.get(s.id) as { cnt: number };
+      const bookedCount = bookedRow.cnt;
+      const currentRemaining = Math.max(0, s.capacity - s.reserved_seats - bookedCount);
+      const targetReserved = Math.max(0, 6 - bookedCount - currentRemaining);
+
+      if (s.capacity !== 6 || s.reserved_seats !== targetReserved) {
+        updateSlot.run(targetReserved, s.id);
+      }
+    }
+  });
+
+  tx();
 }
 
 export function getSetting(key: string, defaultValue: string = ''): string {

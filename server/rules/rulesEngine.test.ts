@@ -5,6 +5,7 @@ import {
   screenByThreshold,
   isNearThreshold,
   computeTotalScore,
+  computeSlotAvailableSeats,
   canBook,
   shouldRemind,
   shouldDrop,
@@ -78,12 +79,18 @@ test('computeTotalScore calculates weighted normalized score and preserves 0.00 
   assert.equal(computeTotalScore(zeroScorecard, criteria), 0);
 });
 
-test('canBook enforces slot capacity, duplicate booking, and start time', () => {
+test('canBook and computeSlotAvailableSeats enforce capacity, reserved_seats, duplicate booking, and start time', () => {
   const now = '2026-11-03T09:00:00.000Z';
+  assert.equal(computeSlotAvailableSeats(6, 0, 0), 6);
+  assert.equal(computeSlotAvailableSeats(6, 0, 4), 2);
+  assert.equal(computeSlotAvailableSeats(6, 0, 5), 1);
+  assert.equal(computeSlotAvailableSeats(6, 1, 5), 0);
+
   const openSlot = {
     id: 'slot-1',
     capacity: 5,
     booked_count: 3,
+    reserved_seats: 0,
     start_at: '2026-11-05T09:00:00.000Z',
   };
   assert.equal(canBook(openSlot, null, now).allowed, true);
@@ -91,6 +98,17 @@ test('canBook enforces slot capacity, duplicate booking, and start time', () => 
 
   const fullSlot = { ...openSlot, booked_count: 5 };
   assert.equal(canBook(fullSlot, null, now).allowed, false);
+
+  // DEMO_FULL_C: capacity=6, reserved_seats=5 -> 1 open seat when booked_count=0, full when booked_count=1
+  const demoFullC = {
+    id: 'slot-demo-full-c',
+    capacity: 6,
+    reserved_seats: 5,
+    booked_count: 0,
+    start_at: '2026-11-05T09:00:00.000Z',
+  };
+  assert.equal(canBook(demoFullC, null, now).allowed, true);
+  assert.equal(canBook({ ...demoFullC, booked_count: 1 }, null, now).allowed, false);
 });
 
 test('shouldRemind and shouldDrop evaluate 1-day and 2-day timers accurately', () => {
