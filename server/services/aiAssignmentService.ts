@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type } from '@google/genai';
-import { fallbackAssignmentSuggestion } from '../rules/rulesEngine';
+import { fallbackAssignmentSuggestion } from '../rules/rulesEngine.ts';
 
 export interface CandidateForAiAssignment {
   applicationId: string;
@@ -57,7 +57,7 @@ export async function generateDepartmentAssignments(
         },
       });
 
-      const prompt = `Bạn là chuyên gia nhân sự hỗ trợ Ban Nhân sự CLB C-res (Trường Đại học Kinh tế - ĐH Đà Nẵng) phân công Cộng tác viên (CTV) mới vào các ban sự kiện.
+      const prompt = `Bạn là chuyên gia nhân sự hỗ trợ Ban Nhân sự Câu lạc bộ Thương mại C-RES (Đại học Kinh tế - Đại học Đà Nẵng) phân công Cộng tác viên (CTV) mới vào 3 ban: Ban Truyền thông, Ban Nhân sự, Ban Kinh doanh.
 
 Danh sách các ban và chỉ tiêu còn lại (TUYỆT ĐỐI KHÔNG vượt quá remainingQuota của mỗi ban):
 ${JSON.stringify(departments, null, 2)}
@@ -69,7 +69,7 @@ Yêu cầu:
 1. Phân công mỗi ứng viên vào đúng 1 ban (departmentId phải nằm trong danh sách các ban ở trên).
 2. Ưu tiên nguyện vọng 1 (firstChoiceDeptId), sau đó nguyện vọng 2 (secondChoiceDeptId), kết hợp điểm phỏng vấn (totalScore) và kinh nghiệm (experience).
 3. Tổng số ứng viên được gợi ý vào mỗi ban KHÔNG ĐƯỢC VƯỢT QUÁ remainingQuota của ban đó.
-4. Viết lý do (reason) ngắn gọn, rõ ràng bằng tiếng Việt (1-2 câu) giải thích vì sao gợi ý ban đó.`;
+4. Viết lý do (reason) ngắn gọn, thân thiện bằng tiếng Việt (1-2 câu) giải thích vì sao gợi ý ban đó.`;
 
       const response = await ai.models.generateContent({
         model: 'gemini-3.8-flash',
@@ -147,7 +147,7 @@ Yêu cầu:
             source: 'gemini',
           })),
           usedAi: true,
-          aiMessage: 'Đã tạo gợi ý phân ban bằng Gemini AI và kiểm tra hợp lệ chỉ tiêu.',
+          aiMessage: 'Đã cập nhật gợi ý phân ban phù hợp với nguyện vọng và năng lực của từng bạn.',
         };
       }
     } catch (err) {
@@ -157,6 +157,7 @@ Yêu cầu:
   }
 
   const fallback = fallbackAssignmentSuggestion(candidates, departments);
+  const unassignedCount = fallback.filter((f) => !f.departmentId).length;
   return {
     suggestions: fallback.map((f) => ({
       ...f,
@@ -164,6 +165,8 @@ Yêu cầu:
     })),
     usedAi: false,
     aiMessage:
-      'Đã tạo gợi ý phân ban bằng thuật toán tối ưu theo điểm + nguyện vọng 1–2 + chỉ tiêu còn lại (Chế độ dự phòng an toàn).',
+      unassignedCount > 0
+        ? `Chưa thể phân công ${unassignedCount} ứng viên do tất cả các ban đã hết chỉ tiêu nhận CTV.`
+        : 'Đã gợi ý phân ban dựa trên nguyện vọng đăng ký, điểm phỏng vấn và chỉ tiêu của 3 Ban.',
   };
 }

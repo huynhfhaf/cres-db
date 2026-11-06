@@ -1,9 +1,12 @@
 @import "tailwindcss";
 
+@theme {
+  --font-sans: 'Be Vietnam Pro', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'Be Vietnam Pro', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
 @layer base {
   :root {
-    --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
-    --font-mono: 'JetBrains Mono', monospace;
     --cres-orange: #F36F00;
     --cres-green: #68A225;
     --cres-cyan: #31B5D8;
@@ -11,14 +14,34 @@
     --cres-teal: #435B61;
   }
 
+  html,
   body {
     font-family: var(--font-sans);
-    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
-    background-color: #FFFFFF;
-    color: #26383C;
+    line-height: 1.6;
+    background-color: #F8FAFC;
+    color: #1E293B;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 
-  table, .tabular-nums {
+  p,
+  li,
+  label,
+  input,
+  select,
+  textarea,
+  button,
+  div,
+  span {
+    font-family: var(--font-sans);
+    line-height: 1.6;
+  }
+
+  table,
+  .tabular-nums,
+  .font-mono {
+    font-family: var(--font-sans);
     font-variant-numeric: tabular-nums;
   }
 }
+

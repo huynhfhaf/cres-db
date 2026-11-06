@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { db, getSetting, setSetting, getSystemNowIso } from '../db/database';
+import { db, getSetting, setSetting, getSystemNowIso } from '../db/database.ts';
 
 export interface EmailTemplate {
   key: string;
@@ -11,63 +11,63 @@ export interface EmailTemplate {
 export const DEFAULT_TEMPLATES: Record<string, EmailTemplate> = {
   supplement_request: {
     key: 'supplement_request',
-    name: 'Yêu cầu bổ sung hồ sơ',
-    subject: '[C-res Recruit] Yêu cầu bổ sung thông tin hồ sơ ứng tuyển CTV',
-    body: 'Chào {{full_name}},\n\nBan Nhân sự CLB C-res đã tiếp nhận hồ sơ của bạn nhưng phát hiện còn thiếu các trường thông tin: {{missing_fields}}.\n\nVui lòng truy cập đường dẫn {{link}} để bổ sung trước hạn chót {{deadline}}. Quá thời hạn trên, hệ thống sẽ tự động đóng hồ sơ.\n\nTrân trọng,\nBan Nhân sự CLB C-res - ĐH Kinh tế ĐHĐN',
+    name: 'Nhắc bổ sung thông tin hồ sơ',
+    subject: '[C-RES] Mời bạn bổ sung thêm thông tin hồ sơ ứng tuyển CTV',
+    body: 'Chào {{full_name}},\n\nCảm ơn bạn đã gửi đơn đăng ký ứng tuyển Cộng tác viên Câu lạc bộ Thương mại C-RES! Hiện tại hồ sơ của bạn vẫn còn thiếu một vài thông tin nhỏ: {{missing_fields}}.\n\nBạn vui lòng truy cập {{link}} để cập nhật đầy đủ trước {{deadline}} giúp tụi mình nhé.\n\nThân mến,\nBan Nhân sự Câu lạc bộ Thương mại C-RES\nĐại học Kinh tế - Đại học Đà Nẵng',
   },
   docs_rejected: {
     key: 'docs_rejected',
-    name: 'Thông báo hồ sơ không đạt',
-    subject: '[C-res Recruit] Thông báo kết quả vòng Hồ sơ đợt tuyển CTV',
-    body: 'Chào {{full_name}},\n\nCảm ơn bạn đã quan tâm và gửi hồ sơ ứng tuyển CTV sự kiện của CLB C-res. Sau khi đánh giá theo tiêu chí của đợt tuyển, rất tiếc hồ sơ của bạn chưa phù hợp ở đợt này ({{reason}}).\n\nHẹn gặp lại bạn ở các chương trình tiếp theo của CLB C-res!\n\nTrân trọng,\nCLB C-res - ĐH Kinh tế ĐHĐN',
+    name: 'Thông báo kết quả vòng Hồ sơ',
+    subject: '[C-RES] Cảm ơn bạn đã tham gia ứng tuyển Cộng tác viên C-RES',
+    body: 'Chào {{full_name}},\n\nCảm ơn bạn đã dành tình cảm và gửi hồ sơ ứng tuyển vào Câu lạc bộ Thương mại C-RES. Sau khi xem xét kỹ lưỡng, tụi mình rất tiếc chưa thể đồng hành cùng bạn trong đợt tuyển lần này ({{reason}}).\n\nHy vọng sẽ sớm được gặp lại bạn ở các sự kiện và đợt tuyển tiếp theo của C-RES nhé!\n\nThân mến,\nCâu lạc bộ Thương mại C-RES\nĐại học Kinh tế - Đại học Đà Nẵng',
   },
   schedule_link: {
     key: 'schedule_link',
-    name: 'Mời đặt lịch phỏng vấn',
-    subject: '[C-res Recruit] Chúc mừng vượt qua vòng Hồ sơ — Mời chọn lịch phỏng vấn',
-    body: 'Chào {{full_name}},\n\nChúc mừng bạn đã vượt qua vòng Hồ sơ đợt tuyển CTV của CLB C-res! Mời bạn truy cập {{link}} để chủ động chọn khung giờ phỏng vấn phù hợp trước {{deadline}}.\n\nLưu ý: Khung giờ có giới hạn chỗ ngồi, vui lòng đặt sớm.\n\nTrân trọng,\nBan Nhân sự CLB C-res',
+    name: 'Mời chọn lịch phỏng vấn',
+    subject: '[C-RES] Chúc mừng bạn vượt qua vòng Hồ sơ — Mời chọn lịch phỏng vấn!',
+    body: 'Chào {{full_name}},\n\nChúc mừng bạn đã xuất sắc vượt qua vòng Hồ sơ đợt tuyển Cộng tác viên của Câu lạc bộ Thương mại C-RES! Bạn hãy truy cập {{link}} để chọn khung giờ phỏng vấn phù hợp nhất với lịch học của mình trước {{deadline}} nhé.\n\nHẹn sớm gặp bạn tại buổi phỏng vấn!\n\nThân mến,\nBan Nhân sự Câu lạc bộ Thương mại C-RES',
   },
   schedule_reminder: {
     key: 'schedule_reminder',
-    name: 'Nhắc nhở đặt lịch phỏng vấn (Sau 1 ngày)',
-    subject: '[C-res Recruit] Nhắc nhở: Bạn chưa chọn khung giờ phỏng vấn CTV',
-    body: 'Chào {{full_name}},\n\nHệ thống ghi nhận bạn đã nhận link đặt lịch phỏng vấn hơn 1 ngày nhưng chưa chọn khung giờ. Vui lòng truy cập {{link}} để đặt lịch trước hạn chót {{deadline}}.\n\nSau thời hạn trên, hệ thống sẽ tự động gạch tên khỏi danh sách phỏng vấn.\n\nTrân trọng,\nBan Nhân sự CLB C-res',
+    name: 'Lời nhắc chọn lịch phỏng vấn',
+    subject: '[C-RES] Đừng quên chọn khung giờ phỏng vấn cùng C-RES nhé!',
+    body: 'Chào {{full_name}},\n\nTụi mình thấy bạn vẫn chưa chọn lịch phỏng vấn cho vòng tiếp theo. Bạn nhớ truy cập {{link}} để chọn ca phỏng vấn phù hợp trước {{deadline}} nha.\n\nNếu cần hỗ trợ thêm, bạn cứ phản hồi ngay cho Ban Nhân sự nhé!\n\nThân mến,\nBan Nhân sự Câu lạc bộ Thương mại C-RES',
   },
   removed_no_booking: {
     key: 'removed_no_booking',
-    name: 'Thông báo hủy tư cách do không đặt lịch (Sau 2 ngày)',
-    subject: '[C-res Recruit] Thông báo kết thúc hồ sơ do quá hạn đặt lịch phỏng vấn',
-    body: 'Chào {{full_name}},\n\nDo đã quá thời hạn 2 ngày ({{deadline}}) kể từ khi gửi lời mời mà bạn chưa chọn khung giờ phỏng vấn, hệ thống xác nhận bạn không tham gia vòng phỏng vấn đợt này.\n\nCảm ơn sự quan tâm của bạn dành cho CLB C-res.\n\nTrân trọng,\nBan Nhân sự CLB C-res',
+    name: 'Thông báo khép lại hồ sơ do chưa đặt lịch',
+    subject: '[C-RES] Hẹn gặp lại bạn ở các đợt tuyển tiếp theo của C-RES',
+    body: 'Chào {{full_name}},\n\nDo thời gian đăng ký lịch phỏng vấn ({{deadline}}) đã khép lại mà tụi mình chưa nhận được lịch hẹn từ bạn, Câu lạc bộ Thương mại C-RES xin phép khép lại hồ sơ của bạn trong đợt này.\n\nCảm ơn bạn đã quan tâm tới C-RES và hẹn gặp lại bạn vào dịp gần nhất nhé!\n\nThân mến,\nCâu lạc bộ Thương mại C-RES',
   },
   result_pass: {
     key: 'result_pass',
-    name: 'Thông báo Đậu phỏng vấn & Mời xác nhận',
-    subject: '[C-res Recruit] CHÚC MỪNG BẠN ĐÃ TRÚNG TUYỂN CTV CLB C-RES!',
-    body: 'Chào {{full_name}},\n\nBan Chủ nhiệm CLB C-res trân trọng chúc mừng bạn đã xuất sắc vượt qua vòng Phỏng vấn đợt tuyển CTV sự kiện!\n\nVui lòng truy cập {{link}} để bấm "Xác nhận tham gia" và nhận link nhóm sinh hoạt chung của CLB.\n\nTrân trọng,\nBan Chủ nhiệm CLB C-res - ĐH Kinh tế ĐHĐN',
+    name: 'Chúc mừng trúng tuyển phỏng vấn',
+    subject: '[C-RES] CHÚC MỪNG BẠN CHÍNH THỨC TRÚNG TUYỂN CỘNG TÁC VIÊN C-RES!',
+    body: 'Chào {{full_name}},\n\nChúc mừng bạn đã chinh phục thành công vòng Phỏng vấn và trở thành mảnh ghép mới của Câu lạc bộ Thương mại C-RES!\n\nBạn hãy truy cập {{link}} và nhấn "Xác nhận tham gia" để vào nhóm sinh hoạt chung cùng đại gia đình C-RES nhé.\n\nThân mến,\nBan Chủ nhiệm Câu lạc bộ Thương mại C-RES\nĐại học Kinh tế - Đại học Đà Nẵng',
   },
   result_fail: {
     key: 'result_fail',
-    name: 'Thông báo Không đạt vòng phỏng vấn',
-    subject: '[C-res Recruit] Thông báo kết quả vòng Phỏng vấn CTV CLB C-res',
-    body: 'Chào {{full_name}},\n\nCảm ơn bạn đã dành thời gian tham gia buổi phỏng vấn cùng Ban Chủ nhiệm CLB C-res. Dù rất ấn tượng với sự nhiệt huyết của bạn, do chỉ tiêu sự kiện có hạn nên CLB chưa thể đồng hành cùng bạn trong đợt này.\n\nChúc bạn luôn giữ vững ngọn lửa năng động tại DUE!\n\nTrân trọng,\nBan Chủ nhiệm CLB C-res',
+    name: 'Thông báo kết quả vòng Phỏng vấn',
+    subject: '[C-RES] Cảm ơn bạn đã tham gia phỏng vấn cùng Câu lạc bộ Thương mại C-RES',
+    body: 'Chào {{full_name}},\n\nCảm ơn bạn đã dành thời gian đến trò chuyện và chia sẻ cùng Ban Chủ nhiệm Câu lạc bộ Thương mại C-RES. Dù rất ấn tượng với sự năng động của bạn, do số lượng thành viên đợt này có hạn nên tụi mình chưa thể đồng hành cùng bạn.\n\nChúc bạn luôn giữ vững ngọn lửa nhiệt huyết tại Đại học Kinh tế - Đại học Đà Nẵng nhé!\n\nThân mến,\nBan Chủ nhiệm Câu lạc bộ Thương mại C-RES',
   },
   assignment_info: {
     key: 'assignment_info',
-    name: 'Thông báo Phân công Ban chính thức',
-    subject: '[C-res Recruit] Thông báo phân công Ban chính thức — {{department}}',
-    body: 'Chào {{full_name}},\n\nChào mừng bạn chính thức trở thành Cộng tác viên của **{{department}}** tại CLB C-res!\n\nHãy kiểm tra thông tin chi tiết và tham gia nhóm truyền thông nội bộ tại {{link}}. Buổi họp Onboarding đầu tiên sẽ được thông báo trong nhóm.\n\nTrân trọng,\nBan Nhân sự & Ban Chủ nhiệm CLB C-res',
+    name: 'Thông báo chào mừng & Phân công Ban',
+    subject: '[C-RES] Chào mừng bạn về với {{department}} — Câu lạc bộ Thương mại C-RES!',
+    body: 'Chào {{full_name}},\n\nChào mừng bạn chính thức gia nhập {{department}} của Câu lạc bộ Thương mại C-RES!\n\nBạn hãy tham gia nhóm sinh hoạt chung tại {{link}} để làm quen với các anh chị và cập nhật lịch họp đầu tiên nhé.\n\nThân mến,\nCâu lạc bộ Thương mại C-RES',
   },
   withdrawn_ack: {
     key: 'withdrawn_ack',
-    name: 'Xác nhận đã rút đơn ứng tuyển',
-    subject: '[C-res Recruit] Xác nhận yêu cầu rút đơn ứng tuyển CTV',
-    body: 'Chào {{full_name}},\n\nHệ thống C-res Recruit đã ghi nhận yêu cầu rút đơn ứng tuyển của bạn vào lúc {{deadline}}. Toàn bộ lịch trình và bộ đếm giờ liên quan đến hồ sơ của bạn đã được hủy.\n\nCảm ơn bạn và hẹn gặp lại ở các hoạt động khác của CLB C-res!\n\nTrân trọng,\nCLB C-res',
+    name: 'Xác nhận rút hồ sơ ứng tuyển',
+    subject: '[C-RES] Xác nhận yêu cầu rút hồ sơ ứng tuyển của bạn',
+    body: 'Chào {{full_name}},\n\nCâu lạc bộ Thương mại C-RES đã ghi nhận yêu cầu rút hồ sơ ứng tuyển của bạn vào lúc {{deadline}}.\n\nCảm ơn bạn đã quan tâm tới CLB và chúc bạn có một học kỳ thật nhiều niềm vui tại trường nhé!\n\nThân mến,\nCâu lạc bộ Thương mại C-RES',
   },
   expired_supplement: {
     key: 'expired_supplement',
-    name: 'Thông báo loại hồ sơ do quá hạn bổ sung',
-    subject: '[C-res Recruit] Thông báo đóng hồ sơ do quá hạn bổ sung thông tin',
-    body: 'Chào {{full_name}},\n\nDo đã quá thời hạn bổ sung thông tin ({{deadline}}) hoặc sau số lần bổ sung tối đa mà hồ sơ vẫn chưa đầy đủ các trường bắt buộc, hệ thống đã tự động khép lại hồ sơ ứng tuyển của bạn.\n\nCảm ơn bạn đã quan tâm đến CLB C-res.\n\nTrân trọng,\nBan Nhân sự CLB C-res',
+    name: 'Thông báo khép lại hồ sơ do hết hạn bổ sung',
+    subject: '[C-RES] Thông báo khép lại hồ sơ ứng tuyển CTV',
+    body: 'Chào {{full_name}},\n\nDo đã qua thời hạn bổ sung thông tin ({{deadline}}) mà hồ sơ của bạn vẫn chưa được cập nhật đầy đủ, tụi mình xin phép khép lại hồ sơ trong đợt tuyển này.\n\nHẹn gặp lại bạn ở các hoạt động sắp tới của Câu lạc bộ Thương mại C-RES nhé!\n\nThân mến,\nBan Nhân sự Câu lạc bộ Thương mại C-RES',
   },
 };
 

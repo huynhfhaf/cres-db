@@ -4,7 +4,7 @@ import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
-import { db, getSetting, setSetting, getSystemNow, getSystemNowIso } from '../db/database';
+import { db, getSetting, setSetting, getSystemNow, getSystemNowIso } from '../db/database.ts';
 import type {
   User,
   UserRole,
@@ -12,7 +12,7 @@ import type {
   RecruitmentRound,
   Department,
   ScoringCriterion,
-} from '../../src/types';
+} from '../../src/types.ts';
 import {
   transition,
   writeAuditLog,
@@ -20,16 +20,23 @@ import {
   sendInterviewBookingInvitation,
   evaluateInterviewAndJoin,
   withdrawApplication,
-} from '../services/stateMachine';
-import { NotificationService } from '../services/notificationService';
+} from '../services/stateMachine.ts';
+import { NotificationService } from '../services/notificationService.ts';
 import {
   canBook,
   computeTotalScore,
+  evaluateScreeningProfile,
+  screenByThreshold,
+  isNearThreshold,
   REQUIRED_FIELD_LABELS,
-} from '../rules/rulesEngine';
-import { generateDepartmentAssignments } from '../services/aiAssignmentService';
-import { runTimerTick } from '../jobs/timerScheduler';
-import { seedDatabase } from '../db/seed';
+  ALL_APPLICATION_STATUSES,
+  isValidStateTransition,
+  canConvergeInterviewAndJoin,
+  shouldDrop,
+} from '../rules/rulesEngine.ts';
+import { generateDepartmentAssignments } from '../services/aiAssignmentService.ts';
+import { runTimerTick } from '../jobs/timerScheduler.ts';
+import { seedDatabase } from '../db/seed.ts';
 
 export const apiRouter = Router();
 
@@ -236,7 +243,18 @@ apiRouter.post('/auth/login', loginRateLimiter, (req: Request, res: Response) =>
   return res.json({ user, token });
 });
 
+function isDemoModeEnabled(): boolean {
+  if (process.env.DEMO_MODE === 'false') return false;
+  return getSetting('DEMO_MODE', 'true') !== 'false';
+}
+
 apiRouter.post('/auth/demo', (req: Request, res: Response) => {
+  if (!isDemoModeEnabled()) {
+    return res.status(403).json({
+      error: 'Chế độ đăng nhập nhanh (Demo Mode) đã bị tắt trong cấu hình bảo mật.',
+    });
+  }
+
   const { role, email } = req.body || {};
   let userRow: User | undefined;
 
@@ -246,7 +264,7 @@ apiRouter.post('/auth/demo', (req: Request, res: Response) => {
       .get(String(email).trim().toLowerCase()) as User | undefined;
   } else if (role) {
     const targetEmailMap: Record<string, string> = {
-      candidate: 'ungvien@due.udn.vn',
+      candidate: 'ungvien1@due.udn.vn',
       hr: 'hr@cres.due.udn.vn',
       board: 'bcn@cres.due.udn.vn',
       admin: 'admin@cres.due.udn.vn',
@@ -277,11 +295,16 @@ apiRouter.get('/auth/me', requireAuth, (req: AuthenticatedRequest, res: Response
     user: req.user,
     systemNow: getSystemNowIso(),
     timeScale: Number(getSetting('TIME_SCALE', '1')) || 1,
+    demoMode: isDemoModeEnabled(),
   });
 });
 
-// Helper endpoint to list demo candidate accounts in different states for quick switching in Demo Mode
+// Helper endpoint to list demo accounts in Demo Mode (disabled when DEMO_MODE=false)
 apiRouter.get('/auth/demo-accounts', (_req: Request, res: Response) => {
+  if (!isDemoModeEnabled()) {
+    return res.json({ staff: [], sampleCandidates: [], demoMode: false });
+  }
+
   const staff = db
     .prepare("SELECT id, email, full_name, role FROM users WHERE role IN ('admin','hr','board') ORDER BY role")
     .all() as User[];
@@ -290,17 +313,92 @@ apiRouter.get('/auth/demo-accounts', (_req: Request, res: Response) => {
     .prepare(`
       SELECT u.id, u.email, u.full_name, u.role, a.status, a.student_id
       FROM users u
-      JOIN applications a ON a.user_id = u.id
-      ORDER BY a.created_at DESC
+      LEFT JOIN applications a ON a.user_id = u.id
+      WHERE u.role = 'candidate'
+      ORDER BY COALESCE(a.created_at, u.created_at) DESC
     `)
     .all() as Array<User & { status: string; student_id: string }>;
 
-  return res.json({ staff, sampleCandidates });
+  return res.json({ staff, sampleCandidates, demoMode: true });
 });
 
 // ============================================================================
 // 2. CURRENT ROUND & METADATA
 // ============================================================================
+
+function syncAndGetDepartmentsWithQuotas(roundId: string): Array<
+  Department & {
+    assigned_count: number;
+    remaining_quota: number;
+    assignedCount: number;
+    remainingQuota: number;
+  }
+> {
+  const departments = db
+    .prepare('SELECT * FROM departments WHERE round_id = ? ORDER BY name ASC')
+    .all(roundId) as Department[];
+
+  const validDeptIds = new Set(departments.map((d) => d.id));
+  const fallbackDeptId = departments[0]?.id || '';
+  const nowIso = getSystemNowIso();
+
+  // Ensure every application in 'assigned' or 'completed' has a 'confirmed' row in `assignments`
+  const completedOrAssignedApps = db
+    .prepare("SELECT id, first_choice_dept_id FROM applications WHERE round_id = ? AND status IN ('assigned', 'completed')")
+    .all(roundId) as Array<{ id: string; first_choice_dept_id: string }>;
+
+  for (const app of completedOrAssignedApps) {
+    const existing = db
+      .prepare('SELECT id, department_id, status FROM assignments WHERE application_id = ?')
+      .get(app.id) as { id: string; department_id: string; status: string } | undefined;
+
+    if (!existing) {
+      const targetDeptId = validDeptIds.has(app.first_choice_dept_id) ? app.first_choice_dept_id : fallbackDeptId;
+      if (targetDeptId) {
+        db.prepare(`
+          INSERT INTO assignments (
+            id, application_id, department_id, ai_suggested_dept_id, ai_reason, status, confirmed_by, notified_at, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, 'Đã chốt phân công ban', 'confirmed', 'system', ?, ?, ?)
+        `).run(crypto.randomUUID(), app.id, targetDeptId, targetDeptId, nowIso, nowIso, nowIso);
+      }
+    } else if (existing.status !== 'confirmed') {
+      const targetDeptId = validDeptIds.has(existing.department_id)
+        ? existing.department_id
+        : validDeptIds.has(app.first_choice_dept_id)
+        ? app.first_choice_dept_id
+        : fallbackDeptId;
+      db.prepare(`
+        UPDATE assignments
+        SET department_id = ?, status = 'confirmed', updated_at = ?
+        WHERE id = ?
+      `).run(targetDeptId, nowIso, existing.id);
+    }
+  }
+
+  return departments.map((d) => {
+    const assigned = db
+      .prepare(`
+        SELECT COUNT(*) as cnt
+        FROM assignments a
+        JOIN applications app ON app.id = a.application_id
+        WHERE a.department_id = ?
+          AND a.status = 'confirmed'
+          AND app.status IN ('assigned', 'completed')
+      `)
+      .get(d.id) as { cnt: number };
+
+    const assignedCount = assigned.cnt;
+    const remainingQuota = Math.max(0, d.quota - assignedCount);
+
+    return {
+      ...d,
+      assigned_count: assignedCount,
+      remaining_quota: remainingQuota,
+      assignedCount,
+      remainingQuota,
+    };
+  });
+}
 
 apiRouter.get('/rounds/current', (_req: Request, res: Response) => {
   const round = db
@@ -311,23 +409,7 @@ apiRouter.get('/rounds/current', (_req: Request, res: Response) => {
     return res.status(404).json({ error: 'Chưa có đợt tuyển nào được khởi tạo.' });
   }
 
-  const departments = db
-    .prepare('SELECT * FROM departments WHERE round_id = ? ORDER BY name ASC')
-    .all(round.id) as Department[];
-
-  // Calculate confirmed assignments per department
-  for (const d of departments) {
-    const assigned = db
-      .prepare(`
-        SELECT COUNT(*) as cnt
-        FROM assignments a
-        JOIN applications app ON app.id = a.application_id
-        WHERE a.department_id = ? AND a.status = 'confirmed' AND app.status != 'withdrawn'
-      `)
-      .get(d.id) as { cnt: number };
-    d.assigned_count = assigned.cnt;
-    d.remaining_quota = Math.max(0, d.quota - assigned.cnt);
-  }
+  const departments = syncAndGetDepartmentsWithQuotas(round.id);
 
   const criteria = db
     .prepare('SELECT * FROM scoring_criteria WHERE round_id = ? ORDER BY weight DESC')
@@ -390,9 +472,25 @@ apiRouter.post('/applications', requireAuth, (req: AuthenticatedRequest, res: Re
     return res.status(400).json({ error: 'Đợt tuyển hiện đã đóng hoặc chưa mở đơn.' });
   }
 
+  const now = getSystemNow();
+  const nowMs = now.getTime();
+  const nowIso = now.toISOString();
+  const openMs = Date.parse(round.open_at);
+  const closeMs = Date.parse(round.close_at);
+
+  if (!Number.isNaN(openMs) && nowMs < openMs) {
+    return res.status(400).json({
+      error: `Đợt tuyển chưa đến thời gian mở đơn (mở lúc ${new Date(openMs).toLocaleString('vi-VN')}).`,
+    });
+  }
+  if (!Number.isNaN(closeMs) && nowMs > closeMs) {
+    return res.status(400).json({
+      error: `Đợt tuyển đã quá thời hạn nhận hồ sơ (đóng lúc ${new Date(closeMs).toLocaleString('vi-VN')}).`,
+    });
+  }
+
   const body = req.body || {};
   const id = crypto.randomUUID();
-  const nowIso = getSystemNowIso();
 
   const fullName = sanitizeText(body.full_name ?? req.user!.full_name);
   const studentId = sanitizeText(body.student_id);
@@ -429,7 +527,7 @@ apiRouter.post('/applications', requireAuth, (req: AuthenticatedRequest, res: Re
     email,
     phone,
     firstChoice,
-    secondChoice || null,
+    secondChoice,
     experience,
     essay,
     cvUrl,
@@ -464,7 +562,7 @@ apiRouter.post('/applications', requireAuth, (req: AuthenticatedRequest, res: Re
 });
 
 // Step 3 Subprocess: Candidate submits supplement fields
-apiRouter.post('/applications/:id/supplement', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+const handleSupplementSubmission = (req: AuthenticatedRequest, res: Response) => {
   const app = db
     .prepare('SELECT * FROM applications WHERE id = ?')
     .get(req.params.id) as Application | undefined;
@@ -535,7 +633,10 @@ apiRouter.post('/applications/:id/supplement', requireAuth, (req: AuthenticatedR
   return res.json({
     application: enrichApplication(processed),
   });
-});
+};
+
+apiRouter.post('/applications/:id/supplement', requireAuth, handleSupplementSubmission);
+apiRouter.put('/applications/:id/supplement', requireAuth, handleSupplementSubmission);
 
 // Global Withdraw Exception
 apiRouter.post('/applications/:id/withdraw', requireAuth, (req: AuthenticatedRequest, res: Response) => {
@@ -553,7 +654,11 @@ apiRouter.post('/applications/:id/withdraw', requireAuth, (req: AuthenticatedReq
   const reason = sanitizeText(req.body?.reason) || 'Ứng viên chủ động rút đơn cá nhân';
   try {
     const updated = withdrawApplication(app.id, reason, `user:${req.user!.id}`);
-    return res.json({ application: enrichApplication(updated) });
+    const enriched = enrichApplication(updated);
+    return res.json({
+      application: enriched,
+      quotaRestored: enriched.assignment?.status === 'revoked',
+    });
   } catch (err) {
     return res.status(400).json({ error: err instanceof Error ? err.message : 'Lỗi khi rút đơn' });
   }
@@ -746,8 +851,8 @@ apiRouter.post(
     if (!app) {
       return res.status(404).json({ error: 'Không tìm thấy hồ sơ.' });
     }
-    if (app.status !== 'clear_fail') {
-      return res.status(400).json({ error: 'Hồ sơ không ở trạng thái Chờ xác nhận loại gần ngưỡng.' });
+    if (app.status !== 'clear_fail' && app.status !== 'rejected_docs') {
+      return res.status(400).json({ error: 'Hồ sơ không ở trạng thái Loại rõ / Chờ xác nhận.' });
     }
 
     const actionType = req.body?.action === 'rescue_pass' ? 'rescue_pass' : 'confirm_reject';
@@ -847,7 +952,7 @@ apiRouter.post(
 // 5. INTERVIEW SLOTS, BOOKING, CHECK-IN & PARALLEL SCORECARDS
 // ============================================================================
 
-apiRouter.get('/slots', requireAuth, (_req: AuthenticatedRequest, res: Response) => {
+apiRouter.get('/slots', requireAuth, (req: AuthenticatedRequest, res: Response) => {
   const round = db
     .prepare('SELECT * FROM recruitment_rounds ORDER BY created_at DESC LIMIT 1')
     .get() as RecruitmentRound | undefined;
@@ -873,6 +978,7 @@ apiRouter.get('/slots', requireAuth, (_req: AuthenticatedRequest, res: Response)
     name: string;
   }>;
   const deptMap = new Map(depts.map((d) => [d.id, d.name]));
+  const isCandidate = req.user!.role === 'candidate';
 
   const slots = rawSlots.map((s) => {
     const bookings = db
@@ -881,6 +987,7 @@ apiRouter.get('/slots', requireAuth, (_req: AuthenticatedRequest, res: Response)
           b.id as booking_id,
           b.application_id,
           b.checked_in_at,
+          a.user_id,
           a.full_name,
           a.student_id,
           a.first_choice_dept_id,
@@ -895,6 +1002,7 @@ apiRouter.get('/slots', requireAuth, (_req: AuthenticatedRequest, res: Response)
       booking_id: string;
       application_id: string;
       checked_in_at: string | null;
+      user_id: string;
       full_name: string;
       student_id: string;
       first_choice_dept_id: string;
@@ -902,11 +1010,17 @@ apiRouter.get('/slots', requireAuth, (_req: AuthenticatedRequest, res: Response)
       scorecard_count: number;
     }>;
 
+    // F07 Fix: Candidates only receive their own booking (if any) and aggregate booked_count/capacity.
+    // Internal staff (hr, board, admin) receive full booking details.
+    const visibleBookings = isCandidate
+      ? bookings.filter((b) => b.user_id === req.user!.id)
+      : bookings;
+
     return {
       ...s,
       interviewer_ids: JSON.parse(s.interviewer_ids || '[]'),
       booked_count: bookings.length,
-      bookings: bookings.map((b) => ({
+      bookings: visibleBookings.map(({ user_id: _uid, ...b }) => ({
         ...b,
         first_choice_name: deptMap.get(b.first_choice_dept_id) || '',
       })),
@@ -916,11 +1030,23 @@ apiRouter.get('/slots', requireAuth, (_req: AuthenticatedRequest, res: Response)
   return res.json({ slots, systemNow: getSystemNowIso() });
 });
 
+function parseSlotDateTime(value: string): Date | null {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return null;
+  // If datetime-local format without timezone offset (YYYY-MM-DDTHH:mm or YYYY-MM-DDTHH:mm:ss),
+  // interpret in Vietnam timezone (+07:00) for consistent behavior across client and server.
+  const hasTimezone = /[zZ]|[+-]\d{2}:?\d{2}$/.test(trimmed);
+  const normalized = hasTimezone ? trimmed : `${trimmed.length === 16 ? `${trimmed}:00` : trimmed}+07:00`;
+  const parsed = new Date(normalized);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed;
+}
+
 const createSlotSchema = z.object({
-  start_at: z.string().min(10),
-  end_at: z.string().min(10),
+  start_at: z.string().min(10, 'Thời gian bắt đầu không hợp lệ'),
+  end_at: z.string().min(10, 'Thời gian kết thúc không hợp lệ'),
   location_or_link: z.string().min(3, 'Vui lòng nhập phòng hoặc link phỏng vấn'),
-  capacity: z.number().int().min(1).max(50),
+  capacity: z.number().int().min(1, 'Sức chứa tối thiểu là 1').max(50, 'Sức chứa tối đa là 50'),
   interviewer_ids: z.array(z.string()).optional(),
 });
 
@@ -937,13 +1063,25 @@ apiRouter.post(
       return res.status(400).json({ error: parsed.error.issues[0]?.message || 'Dữ liệu khung giờ không hợp lệ' });
     }
 
+    const { start_at, end_at, location_or_link, capacity, interviewer_ids } = parsed.data;
+    const startDate = parseSlotDateTime(start_at);
+    const endDate = parseSlotDateTime(end_at);
+
+    if (!startDate || !endDate) {
+      return res.status(400).json({ error: 'Định dạng thời gian bắt đầu hoặc kết thúc không hợp lệ.' });
+    }
+    if (endDate.getTime() <= startDate.getTime()) {
+      return res.status(400).json({
+        error: 'Thời gian kết thúc ca phỏng vấn phải sau thời gian bắt đầu.',
+      });
+    }
+
     const round = db
       .prepare('SELECT id FROM recruitment_rounds ORDER BY created_at DESC LIMIT 1')
       .get() as { id: string };
 
     const id = crypto.randomUUID();
     const nowIso = getSystemNowIso();
-    const { start_at, end_at, location_or_link, capacity, interviewer_ids } = parsed.data;
 
     db.prepare(`
       INSERT INTO interview_slots (id, round_id, start_at, end_at, location_or_link, capacity, interviewer_ids, created_at, updated_at)
@@ -951,8 +1089,8 @@ apiRouter.post(
     `).run(
       id,
       round.id,
-      new Date(start_at).toISOString(),
-      new Date(end_at).toISOString(),
+      startDate.toISOString(),
+      endDate.toISOString(),
       sanitizeText(location_or_link),
       capacity,
       JSON.stringify(interviewer_ids || [req.user!.id]),
@@ -964,13 +1102,30 @@ apiRouter.post(
       applicationId: null,
       actor: `user:${req.user!.id}`,
       action: 'CREATE_INTERVIEW_SLOT',
-      ruleApplied: 'BCN Slot Management',
-      inputSnapshot: { start_at, end_at, location_or_link, capacity },
+      ruleApplied: 'BCN Slot Management (Validated end_at > start_at)',
+      inputSnapshot: {
+        start_at: startDate.toISOString(),
+        end_at: endDate.toISOString(),
+        location_or_link,
+        capacity,
+      },
       result: `BCN (${req.user!.full_name}) đã tạo khung giờ phỏng vấn tại ${location_or_link} (Sức chứa: ${capacity}).`,
       createdAt: nowIso,
     });
 
-    return res.status(201).json({ id });
+    const createdSlot = {
+      id,
+      round_id: round.id,
+      start_at: startDate.toISOString(),
+      end_at: endDate.toISOString(),
+      location_or_link: sanitizeText(location_or_link),
+      capacity,
+    };
+
+    return res.status(201).json({
+      ...createdSlot,
+      slot: createdSlot,
+    });
   }
 );
 
@@ -993,6 +1148,17 @@ apiRouter.post('/applications/:id/book', requireAuth, (req: AuthenticatedRequest
   }
   if (app.status !== 'invited_to_book' && app.status !== 'booked') {
     return res.status(400).json({ error: 'Hồ sơ hiện không ở bước đặt lịch phỏng vấn.' });
+  }
+
+  const now = getSystemNow();
+  const nowIso = now.toISOString();
+
+  // F06 Fix: Enforce 2-day booking deadline directly in the booking API even if background timer hasn't run yet
+  if (app.status === 'invited_to_book' && shouldDrop(app, now.getTime())) {
+    runTimerTick(false);
+    return res.status(400).json({
+      error: 'Đã quá thời hạn 2 ngày đặt lịch phỏng vấn. Hồ sơ đã kết thúc ở trạng thái "Ứng viên không tham gia".',
+    });
   }
 
   const slot = db
@@ -1020,7 +1186,6 @@ apiRouter.post('/applications/:id/book', requireAuth, (req: AuthenticatedRequest
     return res.status(400).json({ error: 'Bạn đã check-in phỏng vấn nên không thể đổi khung giờ.' });
   }
 
-  const nowIso = getSystemNowIso();
   const check = canBook(
     {
       id: slot.id,
@@ -1101,13 +1266,23 @@ apiRouter.post('/applications/:id/check-in', requireAuth, (req: AuthenticatedReq
     booking.id
   );
 
+  const checkInActorDesc =
+    req.user!.role === 'candidate'
+      ? `Ứng viên ${app.full_name} tự check-in tại buổi phỏng vấn.`
+      : `${req.user!.full_name} (${req.user!.role.toUpperCase()}) điểm danh xác nhận có mặt cho ứng viên ${app.full_name}.`;
+
   writeAuditLog({
     applicationId: app.id,
     actor: `user:${req.user!.id}`,
     action: 'INTERVIEW_CHECK_IN',
-    ruleApplied: 'AND-split Branch 1: Candidate Check-in Recorded',
-    inputSnapshot: { bookingId: booking.id, checkedInAt: nowIso },
-    result: `Ứng viên ${app.full_name} đã check-in tại buổi phỏng vấn.`,
+    ruleApplied: 'AND-split Branch 1: Candidate Check-in Recorded Explicitly',
+    inputSnapshot: {
+      bookingId: booking.id,
+      checkedInAt: nowIso,
+      recordedByRole: req.user!.role,
+      recordedByName: req.user!.full_name,
+    },
+    result: checkInActorDesc,
     createdAt: nowIso,
   });
 
@@ -1128,16 +1303,66 @@ apiRouter.post(
     if (!app) {
       return res.status(404).json({ error: 'Không tìm thấy hồ sơ ứng viên.' });
     }
-    if (!['booked', 'interviewing', 'scored', 'decided_pass', 'decided_fail'].includes(app.status)) {
-      return res.status(400).json({ error: 'Hồ sơ này không ở giai đoạn chấm điểm phỏng vấn.' });
+    if (
+      ![
+        'booked',
+        'interviewing',
+        'scored',
+        'decided_pass',
+        'decided_fail',
+      ].includes(app.status)
+    ) {
+      return res.status(400).json({
+        error: 'Hồ sơ này chưa đặt lịch phỏng vấn hoặc đã kết thúc giai đoạn chấm điểm phỏng vấn.',
+      });
     }
 
-    const { scores, comment } = req.body || {};
-    if (!scores || typeof scores !== 'object') {
+    const { scores, comment, decision } = req.body || {};
+    if (!scores || typeof scores !== 'object' || Array.isArray(scores)) {
       return res.status(400).json({ error: 'Vui lòng nhập điểm cho các tiêu chí.' });
     }
 
+    const round = db
+      .prepare('SELECT * FROM recruitment_rounds WHERE id = ?')
+      .get(app.round_id) as RecruitmentRound;
+    const criteria = db
+      .prepare('SELECT id, name, weight, max_score FROM scoring_criteria WHERE round_id = ?')
+      .all(app.round_id) as Array<{ id: string; name: string; weight: number; max_score: number }>;
+
+    const sanitizedScores: Record<string, number> = {};
+    for (const crit of criteria) {
+      const rawVal = (scores as Record<string, unknown>)[crit.id];
+      if (rawVal === undefined || rawVal === null || rawVal === '') {
+        return res.status(400).json({ error: `Thiếu điểm cho tiêu chí "${crit.name}".` });
+      }
+      const numVal = Number(rawVal);
+      if (!Number.isFinite(numVal) || numVal < 0 || numVal > crit.max_score) {
+        return res.status(400).json({
+          error: `Điểm của tiêu chí "${crit.name}" phải nằm trong khoảng từ 0 đến ${crit.max_score}.`,
+        });
+      }
+      sanitizedScores[crit.id] = numVal;
+    }
+
+    const existingBooking = db
+      .prepare('SELECT id, checked_in_at FROM interview_bookings WHERE application_id = ?')
+      .get(app.id) as { id: string; checked_in_at: string | null } | undefined;
+
+    if (!existingBooking) {
+      return res.status(400).json({ error: 'Ứng viên chưa đặt ca phỏng vấn.' });
+    }
+
+    // F10 Fix: Do NOT auto-check-in when submitting a scorecard!
+    // If BCN wants to immediately decide ('pass' | 'fail' | 'waitlist') in the same request,
+    // the candidate MUST have already checked in.
+    if (decision && ['pass', 'fail', 'waitlist'].includes(decision) && !existingBooking.checked_in_at) {
+      return res.status(400).json({
+        error: 'Ứng viên chưa được điểm danh (Check-in) nên chưa thể chốt kết quả Đậu/Rớt. Vui lòng bấm Check-in trước hoặc chỉ lưu phiếu điểm.',
+      });
+    }
+
     const nowIso = getSystemNowIso();
+
     const existing = db
       .prepare('SELECT id FROM scorecards WHERE application_id = ? AND interviewer_id = ?')
       .get(app.id, req.user!.id) as { id: string } | undefined;
@@ -1147,7 +1372,7 @@ apiRouter.post(
         UPDATE scorecards
         SET scores = ?, comment = ?, submitted_at = ?, updated_at = ?
         WHERE id = ?
-      `).run(JSON.stringify(scores), sanitizeText(comment), nowIso, nowIso, existing.id);
+      `).run(JSON.stringify(sanitizedScores), sanitizeText(comment), nowIso, nowIso, existing.id);
     } else {
       db.prepare(`
         INSERT INTO scorecards (id, application_id, interviewer_id, scores, comment, submitted_at, created_at, updated_at)
@@ -1156,7 +1381,7 @@ apiRouter.post(
         crypto.randomUUID(),
         app.id,
         req.user!.id,
-        JSON.stringify(scores),
+        JSON.stringify(sanitizedScores),
         sanitizeText(comment),
         nowIso,
         nowIso,
@@ -1168,14 +1393,84 @@ apiRouter.post(
       applicationId: app.id,
       actor: `user:${req.user!.id}`,
       action: 'SUBMIT_SCORECARD',
-      ruleApplied: 'AND-split Branch 2: Subprocess Phỏng vấn và chấm điểm',
-      inputSnapshot: { interviewer: req.user!.full_name, scores, comment },
+      ruleApplied: 'AND-split Branch 2: Subprocess Phỏng vấn và chấm điểm (Independent of Check-in)',
+      inputSnapshot: { interviewer: req.user!.full_name, scores: sanitizedScores, comment },
       result: `Giám khảo ${req.user!.full_name} đã nộp phiếu chấm điểm phỏng vấn.`,
       createdAt: nowIso,
     });
 
-    const converged = evaluateInterviewAndJoin(app.id, `user:${req.user!.id}`);
-    return res.json({ application: enrichApplication(converged) });
+    let converged = evaluateInterviewAndJoin(app.id, `user:${req.user!.id}`);
+
+    // If BCN also selected a decision ('pass' | 'fail' | 'waitlist') right in the scorecard modal
+    if (decision && ['pass', 'fail', 'waitlist'].includes(decision)) {
+      const scorecardsRows = db
+        .prepare('SELECT scores FROM scorecards WHERE application_id = ?')
+        .all(app.id) as Array<{ scores: string }>;
+
+      if (
+        !canConvergeInterviewAndJoin(
+          existingBooking.checked_in_at,
+          scorecardsRows.length,
+          round.min_scorecards_per_interview
+        )
+      ) {
+        return res.status(400).json({
+          error: `Chưa đủ điều kiện hội tụ phỏng vấn (Cần Check-in và tối thiểu ${round.min_scorecards_per_interview} phiếu chấm điểm).`,
+        });
+      }
+
+      // F04 Fix: Preserve 0 score when scorecards exist
+      const totalScore = computeTotalScore(
+        scorecardsRows.map((s) => ({ scores: JSON.parse(s.scores || '{}') })),
+        criteria
+      );
+
+      db.prepare(`
+        INSERT INTO selection_decisions (id, application_id, total_score, decision, decided_by, note, notified_at, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)
+        ON CONFLICT(application_id) DO UPDATE SET
+          total_score = excluded.total_score,
+          decision = excluded.decision,
+          decided_by = excluded.decided_by,
+          note = excluded.note,
+          updated_at = excluded.updated_at
+      `).run(
+        crypto.randomUUID(),
+        app.id,
+        totalScore,
+        decision,
+        req.user!.id,
+        sanitizeText(comment) || (decision === 'pass' ? 'BCN chấm điểm và duyệt Đậu' : 'BCN chấm điểm và xét Loại'),
+        nowIso,
+        nowIso
+      );
+
+      const nextStatus =
+        decision === 'pass' ? 'decided_pass' : decision === 'fail' ? 'decided_fail' : 'scored';
+
+      converged = transition({
+        applicationId: app.id,
+        nextStatus,
+        actor: `user:${req.user!.id}`,
+        action: 'BCN_SELECT_DECISION',
+        ruleApplied: 'BCN Graded & Decided Immediately (After AND-join Convergence)',
+        inputSnapshot: { decision, totalScore, decidedBy: req.user!.full_name },
+        resultText: `BCN (${req.user!.full_name}) chấm điểm (${totalScore}đ) và chọn kết quả: ${
+          decision === 'pass' ? 'ĐÃ ĐẬU (Chờ chốt gửi TB)' : decision === 'waitlist' ? 'CHỜ XÉT / DỰ BỊ' : 'ĐÃ LOẠI (Chờ chốt gửi TB)'
+        }.`,
+        endReason: null,
+        extraColumns: { end_reason: null, finished_at: null },
+        timestampIso: nowIso,
+      });
+    }
+
+    const enriched = enrichApplication(converged);
+    const computedTotalScore = computeTotalScore(
+      (enriched.scorecards || []).map((s: { scores: Record<string, number> }) => ({ scores: s.scores })),
+      criteria
+    );
+
+    return res.json({ application: enriched, computedTotalScore });
   }
 );
 
@@ -1196,22 +1491,7 @@ apiRouter.get(
       .prepare('SELECT * FROM scoring_criteria WHERE round_id = ? ORDER BY weight DESC')
       .all(round.id) as ScoringCriterion[];
 
-    const departments = db
-      .prepare('SELECT * FROM departments WHERE round_id = ? ORDER BY name ASC')
-      .all(round.id) as Department[];
-
-    for (const d of departments) {
-      const assigned = db
-        .prepare(`
-          SELECT COUNT(*) as cnt
-          FROM assignments a
-          JOIN applications app ON app.id = a.application_id
-          WHERE a.department_id = ? AND a.status = 'confirmed' AND app.status != 'withdrawn'
-        `)
-        .get(d.id) as { cnt: number };
-      d.assigned_count = assigned.cnt;
-      d.remaining_quota = Math.max(0, d.quota - assigned.cnt);
-    }
+    const departments = syncAndGetDepartmentsWithQuotas(round.id);
 
     const interviewApps = db
       .prepare(`
@@ -1223,14 +1503,22 @@ apiRouter.get(
 
     const enrichedList = interviewApps.map((app) => {
       const enriched = enrichApplication(app);
-      const computedWeightedScore = computeTotalScore(enriched.scorecards || [], criteria);
+      const hasScorecards = Boolean(enriched.scorecards && enriched.scorecards.length > 0);
+      const computedWeightedScore = hasScorecards
+        ? computeTotalScore(enriched.scorecards || [], criteria)
+        : null;
+      // F04 Fix: Preserve 0 interview score when scorecards exist; never replace 0 with screening_score!
+      const resolvedTotalScore =
+        computedWeightedScore !== null
+          ? computedWeightedScore
+          : enriched.selection_decision?.total_score ?? null;
       return {
         ...enriched,
-        computed_total_score: enriched.selection_decision?.total_score ?? computedWeightedScore,
+        computed_total_score: resolvedTotalScore,
       };
     });
 
-    enrichedList.sort((a, b) => (b.computed_total_score || 0) - (a.computed_total_score || 0));
+    enrichedList.sort((a, b) => (b.computed_total_score ?? -1) - (a.computed_total_score ?? -1));
 
     return res.json({
       candidates: enrichedList,
@@ -1241,7 +1529,7 @@ apiRouter.get(
   }
 );
 
-// Step 10: BCN decides Pass / Waitlist / Fail (Human decision, NOT auto-notified)
+// Step 10: BCN decides Pass / Waitlist / Fail (F02, F04, F10 Fixed)
 const selectionDecideSchema = z.object({
   decision: z.enum(['pass', 'waitlist', 'fail']),
   note: z.string().optional(),
@@ -1264,20 +1552,57 @@ apiRouter.post(
     if (!app) {
       return res.status(404).json({ error: 'Không tìm thấy hồ sơ ứng viên.' });
     }
-    if (!['scored', 'decided_pass', 'decided_fail'].includes(app.status)) {
+
+    // F02 Fix: Only allow deciding on applications in the interview scoring / pre-finalization stage.
+    // Strictly reject applications in pre-interview, post-offer, or terminal/withdrawn statuses.
+    const eligibleStatuses: Application['status'][] = [
+      'booked',
+      'interviewing',
+      'scored',
+      'decided_pass',
+      'decided_fail',
+    ];
+    if (!eligibleStatuses.includes(app.status)) {
       return res.status(400).json({
-        error: 'Ứng viên phải hoàn tất hội tụ AND-join (đã check-in + đủ phiếu điểm) trước khi BCN quyết định.',
+        error: `Không thể ra quyết định xét tuyển cho hồ sơ đang ở trạng thái "${app.status}".`,
       });
+    }
+
+    const round = db
+      .prepare('SELECT * FROM recruitment_rounds WHERE id = ?')
+      .get(app.round_id) as RecruitmentRound;
+
+    const existingBooking = db
+      .prepare('SELECT id, checked_in_at FROM interview_bookings WHERE application_id = ?')
+      .get(app.id) as { id: string; checked_in_at: string | null } | undefined;
+
+    const scorecardsRows = db
+      .prepare('SELECT scores FROM scorecards WHERE application_id = ?')
+      .all(app.id) as Array<{ scores: string }>;
+
+    // F02 & F10 Fix: Require explicit check-in AND minimum scorecards before BCN can decide Pass/Fail
+    if (
+      !canConvergeInterviewAndJoin(
+        existingBooking?.checked_in_at,
+        scorecardsRows.length,
+        round.min_scorecards_per_interview
+      )
+    ) {
+      return res.status(400).json({
+        error: `Ứng viên chưa check-in hoặc chưa đủ tối thiểu ${round.min_scorecards_per_interview} phiếu chấm điểm phỏng vấn để ra quyết định.`,
+      });
+    }
+
+    // Ensure application has converged to 'scored' if it was still in 'booked'/'interviewing'
+    if (app.status === 'booked' || app.status === 'interviewing') {
+      evaluateInterviewAndJoin(app.id, 'system');
     }
 
     const criteria = db
       .prepare('SELECT id, weight, max_score FROM scoring_criteria WHERE round_id = ?')
       .all(app.round_id) as Array<{ id: string; weight: number; max_score: number }>;
 
-    const scorecardsRows = db
-      .prepare('SELECT scores FROM scorecards WHERE application_id = ?')
-      .all(app.id) as Array<{ scores: string }>;
-
+    // F04 Fix: Preserve 0 score when scorecards have all-zero scores; never replace 0 with screening_score!
     const totalScore = computeTotalScore(
       scorecardsRows.map((s) => ({ scores: JSON.parse(s.scores || '{}') })),
       criteria
@@ -1285,144 +1610,325 @@ apiRouter.post(
 
     const { decision, note } = parsed.data;
     const nowIso = getSystemNowIso();
-
-    db.prepare(`
-      INSERT INTO selection_decisions (id, application_id, total_score, decision, decided_by, note, notified_at, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)
-      ON CONFLICT(application_id) DO UPDATE SET
-        total_score = excluded.total_score,
-        decision = excluded.decision,
-        decided_by = excluded.decided_by,
-        note = excluded.note,
-        updated_at = excluded.updated_at
-    `).run(crypto.randomUUID(), app.id, totalScore, decision, req.user!.id, sanitizeText(note), nowIso, nowIso);
-
-    const nextStatus =
+    const nextStatus: Application['status'] =
       decision === 'pass' ? 'decided_pass' : decision === 'fail' ? 'decided_fail' : 'scored';
 
-    const updated = transition({
-      applicationId: app.id,
-      nextStatus,
-      actor: `user:${req.user!.id}`,
-      action: 'BCN_SELECT_DECISION',
-      ruleApplied: 'Human Decision on Selection Summary (Pending Finalize & Notify)',
-      inputSnapshot: { decision, totalScore, note, decidedBy: req.user!.full_name },
-      resultText: `BCN (${req.user!.full_name}) chọn kết quả: ${
-        decision === 'pass' ? 'ĐẬU' : decision === 'waitlist' ? 'DỰ BỊ' : 'RỚT'
-      } (Điểm tổng hợp: ${totalScore}đ). Chờ bấm "Chốt và gửi".`,
-      timestampIso: nowIso,
-    });
+    const updatedApp = db.transaction(() => {
+      db.prepare(`
+        INSERT INTO selection_decisions (id, application_id, total_score, decision, decided_by, note, notified_at, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)
+        ON CONFLICT(application_id) DO UPDATE SET
+          total_score = excluded.total_score,
+          decision = excluded.decision,
+          decided_by = excluded.decided_by,
+          note = excluded.note,
+          updated_at = excluded.updated_at
+      `).run(
+        crypto.randomUUID(),
+        app.id,
+        totalScore,
+        decision,
+        req.user!.id,
+        sanitizeText(note) ||
+          (decision === 'pass'
+            ? 'BCN xét chọn Đậu phỏng vấn'
+            : decision === 'waitlist'
+            ? 'Đưa vào danh sách Chờ xét / Dự bị'
+            : 'BCN xét chọn Rớt phỏng vấn'),
+        nowIso,
+        nowIso
+      );
 
-    return res.json({ application: enrichApplication(updated) });
+      return transition({
+        applicationId: app.id,
+        nextStatus,
+        actor: `user:${req.user!.id}`,
+        action: 'BCN_SELECT_DECISION',
+        ruleApplied: 'BCN Selection Decision (Validated Check-in + Scorecards + State Machine)',
+        inputSnapshot: {
+          previousStatus: app.status,
+          nextStatus,
+          decision,
+          totalScore,
+          note,
+          decidedBy: req.user!.full_name,
+        },
+        resultText: `BCN (${req.user!.full_name}) quyết định kết quả phỏng vấn: ${
+          decision === 'pass'
+            ? 'ĐÃ ĐẬU (Chờ chốt gửi TB)'
+            : decision === 'waitlist'
+            ? 'CHỜ XÉT / DỰ BỊ'
+            : 'ĐÃ LOẠI (Chờ chốt gửi TB)'
+        } (Điểm phỏng vấn: ${totalScore}đ).`,
+        endReason: null,
+        extraColumns: { end_reason: null, finished_at: null },
+        timestampIso: nowIso,
+      });
+    })();
+
+    return res.json({ application: enrichApplication(updatedApp) });
   }
 );
 
-// Step 11: BCN clicks "Chốt và gửi" after previewing recipients
-apiRouter.post(
-  '/selection/finalize-and-notify',
+// Controlled status update endpoint with strict enum validation, role check & state machine enforcement (F03 Fixed)
+apiRouter.put(
+  '/applications/:id/status',
   requireAuth,
-  requireRole('board', 'admin'),
+  requireRole('hr', 'board', 'admin'),
   (req: AuthenticatedRequest, res: Response) => {
-    const targetIds: string[] | undefined = Array.isArray(req.body?.applicationIds)
-      ? req.body.applicationIds
-      : undefined;
+    const app = db
+      .prepare('SELECT * FROM applications WHERE id = ?')
+      .get(req.params.id) as Application | undefined;
 
-    let pendingApps = db
-      .prepare("SELECT * FROM applications WHERE status IN ('decided_pass', 'decided_fail')")
-      .all() as Application[];
-
-    if (targetIds && targetIds.length > 0) {
-      const idSet = new Set(targetIds);
-      pendingApps = pendingApps.filter((a) => idSet.has(a.id));
+    if (!app) {
+      return res.status(404).json({ error: 'Không tìm thấy hồ sơ ứng viên.' });
     }
 
-    if (pendingApps.length === 0) {
+    const rawStatus = sanitizeText(req.body?.status);
+    const note = sanitizeText(req.body?.note) || 'Cập nhật trạng thái hồ sơ';
+
+    if (!rawStatus || !ALL_APPLICATION_STATUSES.includes(rawStatus as Application['status'])) {
       return res.status(400).json({
-        error: 'Không có ứng viên nào ở trạng thái Chờ chốt và gửi thông báo Đậu/Rớt.',
+        error: `Trạng thái "${rawStatus || ''}" không tồn tại trong hệ thống.`,
+      });
+    }
+
+    const nextStatus = rawStatus as Application['status'];
+
+    // Role-based permission checks on status transitions (BTH 3.2):
+    // HR is only allowed to transition document review states, NOT interview selection decisions.
+    const interviewDecisionStates: Application['status'][] = [
+      'scored',
+      'decided_pass',
+      'decided_fail',
+      'offer_sent',
+      'failed_interview',
+    ];
+    if (req.user!.role === 'hr' && interviewDecisionStates.includes(nextStatus)) {
+      return res.status(403).json({
+        error: 'Theo phân quyền BTH 3.2, chỉ Ban Chủ nhiệm (BCN) mới có quyền quyết định kết quả phỏng vấn.',
+      });
+    }
+
+    const hrReviewStates: Application['status'][] = [
+      'review_pass',
+      'review_fail',
+      'rejected_docs',
+      'invited_to_book',
+      'assigned',
+      'completed',
+    ];
+    if (req.user!.role === 'board' && hrReviewStates.includes(nextStatus)) {
+      return res.status(403).json({
+        error: 'Thao tác duyệt hồ sơ và phân công ban thuộc thẩm quyền của Ban Nhân sự (BNS).',
+      });
+    }
+
+    if (!isValidStateTransition(app.status, nextStatus)) {
+      return res.status(400).json({
+        error: `Chuyển trạng thái không hợp lệ từ "${app.status}" sang "${nextStatus}".`,
+      });
+    }
+
+    const round = db
+      .prepare('SELECT * FROM recruitment_rounds WHERE id = ?')
+      .get(app.round_id) as RecruitmentRound;
+
+    const existingBooking = db
+      .prepare('SELECT id, checked_in_at FROM interview_bookings WHERE application_id = ?')
+      .get(app.id) as { id: string; checked_in_at: string | null } | undefined;
+
+    const scorecardsRows = db
+      .prepare('SELECT scores FROM scorecards WHERE application_id = ?')
+      .all(app.id) as Array<{ scores: string }>;
+
+    if (
+      ['scored', 'decided_pass', 'decided_fail'].includes(nextStatus) &&
+      !canConvergeInterviewAndJoin(
+        existingBooking?.checked_in_at,
+        scorecardsRows.length,
+        round.min_scorecards_per_interview
+      )
+    ) {
+      return res.status(400).json({
+        error: `Ứng viên chưa check-in hoặc chưa đủ tối thiểu ${round.min_scorecards_per_interview} phiếu chấm điểm.`,
       });
     }
 
     const nowIso = getSystemNowIso();
-    let passedCount = 0;
-    let failedCount = 0;
+    const criteria = db
+      .prepare('SELECT id, weight, max_score FROM scoring_criteria WHERE round_id = ?')
+      .all(app.round_id) as Array<{ id: string; weight: number; max_score: number }>;
 
-    for (const app of pendingApps) {
-      if (app.status === 'decided_pass') {
-        transition({
-          applicationId: app.id,
-          nextStatus: 'offer_sent',
-          actor: `user:${req.user!.id}`,
-          action: 'FINALIZE_AND_SEND_PASS',
-          ruleApplied: 'Gate Kết quả tuyển chọn? = Đậu (Confirmed by BCN) -> Send Offer Notification',
-          inputSnapshot: { finalizedBy: req.user!.full_name },
-          resultText: `BCN (${req.user!.full_name}) đã chốt và gửi thông báo TRÚNG TUYỂN cho ứng viên.`,
-          timestampIso: nowIso,
+    const hasScorecards = scorecardsRows.length > 0;
+    const computedScore = hasScorecards
+      ? computeTotalScore(
+          scorecardsRows.map((s) => ({ scores: JSON.parse(s.scores || '{}') })),
+          criteria
+        )
+      : app.screening_score ?? 0;
+
+    if (nextStatus === 'assigned' || nextStatus === 'completed') {
+      const existingAssign = db
+        .prepare('SELECT department_id, status FROM assignments WHERE application_id = ?')
+        .get(app.id) as { department_id: string; status: string } | undefined;
+      const targetDeptId = existingAssign?.department_id || app.first_choice_dept_id;
+      const currentQuotas = syncAndGetDepartmentsWithQuotas(app.round_id);
+      const targetDept = currentQuotas.find((d) => d.id === targetDeptId);
+      if (!targetDept) {
+        return res.status(400).json({ error: 'Chưa xác định được ban phân công hợp lệ.' });
+      }
+      if (existingAssign?.status !== 'confirmed' && targetDept.remainingQuota <= 0) {
+        return res.status(400).json({
+          error: `${targetDept.name} đã hết chỉ tiêu nhận CTV (0/${targetDept.quota}).`,
         });
-
-        db.prepare('UPDATE selection_decisions SET notified_at = ?, updated_at = ? WHERE application_id = ?').run(
-          nowIso,
-          nowIso,
-          app.id
-        );
-
-        NotificationService.send({
-          applicationId: app.id,
-          toEmail: app.email,
-          templateKey: 'result_pass',
-          variables: {
-            full_name: app.full_name,
-            link: '/my-application',
-          },
-          createdAt: nowIso,
-        });
-        passedCount += 1;
-      } else if (app.status === 'decided_fail') {
-        transition({
-          applicationId: app.id,
-          nextStatus: 'failed_interview',
-          actor: `user:${req.user!.id}`,
-          action: 'FINALIZE_AND_SEND_FAIL',
-          ruleApplied: 'Gate Kết quả tuyển chọn? = Rớt (Confirmed by BCN) -> Send Fail Notification & End Case',
-          inputSnapshot: { finalizedBy: req.user!.full_name },
-          resultText: `BCN (${req.user!.full_name}) đã chốt và gửi thông báo RỚT phỏng vấn. Kết thúc "Ứng viên không đạt".`,
-          endReason: 'failed_interview',
-          timestampIso: nowIso,
-        });
-
-        db.prepare('UPDATE selection_decisions SET notified_at = ?, updated_at = ? WHERE application_id = ?').run(
-          nowIso,
-          nowIso,
-          app.id
-        );
-
-        NotificationService.send({
-          applicationId: app.id,
-          toEmail: app.email,
-          templateKey: 'result_fail',
-          variables: {
-            full_name: app.full_name,
-            link: '/my-application',
-          },
-          createdAt: nowIso,
-        });
-        failedCount += 1;
       }
     }
 
-    return res.json({
-      finalizedTotal: passedCount + failedCount,
-      passedCount,
-      failedCount,
-    });
+    const updatedApp = db.transaction(() => {
+      if (nextStatus === 'decided_pass' || nextStatus === 'decided_fail') {
+        const decisionVal = nextStatus === 'decided_pass' ? 'pass' : 'fail';
+        db.prepare(`
+          INSERT INTO selection_decisions (id, application_id, total_score, decision, decided_by, note, notified_at, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)
+          ON CONFLICT(application_id) DO UPDATE SET
+            total_score = excluded.total_score,
+            decision = excluded.decision,
+            decided_by = excluded.decided_by,
+            note = excluded.note,
+            updated_at = excluded.updated_at
+        `).run(crypto.randomUUID(), app.id, computedScore, decisionVal, req.user!.id, note, nowIso, nowIso);
+      } else if (nextStatus === 'scored') {
+        db.prepare('DELETE FROM selection_decisions WHERE application_id = ?').run(app.id);
+      }
+
+      const transitioned = transition({
+        applicationId: app.id,
+        nextStatus,
+        actor: `user:${req.user!.id}`,
+        action: 'UPDATE_APPLICATION_STATUS',
+        ruleApplied: 'Validated State Machine Transition',
+        inputSnapshot: { previousStatus: app.status, nextStatus, note },
+        resultText: `${req.user!.full_name} đã chuyển trạng thái hồ sơ sang "${nextStatus}" (${note}).`,
+        timestampIso: nowIso,
+      });
+
+      if (nextStatus === 'assigned' || nextStatus === 'completed') {
+        syncAndGetDepartmentsWithQuotas(app.round_id);
+      }
+
+      return transitioned;
+    })();
+
+    return res.json({ application: enrichApplication(updatedApp) });
   }
 );
+
+// Step 11: BCN clicks "Chốt và gửi" after previewing recipients
+const handleFinalizeAndNotify = (req: AuthenticatedRequest, res: Response) => {
+  const targetIds: string[] | undefined = Array.isArray(req.body?.applicationIds)
+    ? req.body.applicationIds
+    : undefined;
+
+  let pendingApps = db
+    .prepare("SELECT * FROM applications WHERE status IN ('decided_pass', 'decided_fail')")
+    .all() as Application[];
+
+  if (targetIds && targetIds.length > 0) {
+    const idSet = new Set(targetIds);
+    pendingApps = pendingApps.filter((a) => idSet.has(a.id));
+  }
+
+  if (pendingApps.length === 0) {
+    return res.status(400).json({
+      error: 'Không có ứng viên nào ở trạng thái Chờ chốt và gửi thông báo Đậu/Rớt.',
+    });
+  }
+
+  const nowIso = getSystemNowIso();
+  let passedCount = 0;
+  let failedCount = 0;
+
+  for (const app of pendingApps) {
+    if (app.status === 'decided_pass') {
+      transition({
+        applicationId: app.id,
+        nextStatus: 'offer_sent',
+        actor: `user:${req.user!.id}`,
+        action: 'FINALIZE_AND_SEND_PASS',
+        ruleApplied: 'Gate Kết quả tuyển chọn? = Đậu (Confirmed by BCN) -> Send Offer Notification',
+        inputSnapshot: { finalizedBy: req.user!.full_name },
+        resultText: `BCN (${req.user!.full_name}) đã chốt và gửi thông báo TRÚNG TUYỂN cho ứng viên.`,
+        timestampIso: nowIso,
+      });
+
+      db.prepare('UPDATE selection_decisions SET notified_at = ?, updated_at = ? WHERE application_id = ?').run(
+        nowIso,
+        nowIso,
+        app.id
+      );
+
+      NotificationService.send({
+        applicationId: app.id,
+        toEmail: app.email,
+        templateKey: 'result_pass',
+        variables: {
+          full_name: app.full_name,
+          link: '/my-application',
+        },
+        createdAt: nowIso,
+      });
+      passedCount += 1;
+    } else if (app.status === 'decided_fail') {
+      transition({
+        applicationId: app.id,
+        nextStatus: 'failed_interview',
+        actor: `user:${req.user!.id}`,
+        action: 'FINALIZE_AND_SEND_FAIL',
+        ruleApplied: 'Gate Kết quả tuyển chọn? = Rớt (Confirmed by BCN) -> Send Fail Notification & End Case',
+        inputSnapshot: { finalizedBy: req.user!.full_name },
+        resultText: `BCN (${req.user!.full_name}) đã chốt và gửi thông báo RỚT phỏng vấn. Kết thúc "Ứng viên không đạt".`,
+        endReason: 'failed_interview',
+        timestampIso: nowIso,
+      });
+
+      db.prepare('UPDATE selection_decisions SET notified_at = ?, updated_at = ? WHERE application_id = ?').run(
+        nowIso,
+        nowIso,
+        app.id
+      );
+
+      NotificationService.send({
+        applicationId: app.id,
+        toEmail: app.email,
+        templateKey: 'result_fail',
+        variables: {
+          full_name: app.full_name,
+          link: '/my-application',
+        },
+        createdAt: nowIso,
+      });
+      failedCount += 1;
+    }
+  }
+
+  return res.json({
+    finalizedTotal: passedCount + failedCount,
+    sentCount: passedCount + failedCount,
+    passedCount,
+    failedCount,
+  });
+};
+
+apiRouter.post('/selection/finalize-and-notify', requireAuth, requireRole('board', 'admin'), handleFinalizeAndNotify);
+apiRouter.post('/selection/finalize', requireAuth, requireRole('board', 'admin'), handleFinalizeAndNotify);
 
 // ============================================================================
 // 7. STEP 12: CANDIDATE 1-CLICK CONFIRM & JOIN GROUP
 // ============================================================================
 
-apiRouter.post('/confirm-join', requireAuth, (req: AuthenticatedRequest, res: Response) => {
-  const applicationId = req.body?.applicationId;
+const handleConfirmJoin = (req: AuthenticatedRequest, res: Response) => {
+  const applicationId = req.params.id || req.body?.applicationId;
   const app = applicationId
     ? (db.prepare('SELECT * FROM applications WHERE id = ?').get(applicationId) as Application | undefined)
     : (db
@@ -1459,7 +1965,10 @@ apiRouter.post('/confirm-join', requireAuth, (req: AuthenticatedRequest, res: Re
     application: enrichApplication(updated),
     groupLink: round.group_link,
   });
-});
+};
+
+apiRouter.post('/confirm-join', requireAuth, handleConfirmJoin);
+apiRouter.post('/applications/:id/confirm-join', requireAuth, handleConfirmJoin);
 
 // ============================================================================
 // 8. STEP 13-14: AI-ASSISTED DEPARTMENT ASSIGNMENT & HR FINALIZATION
@@ -1474,36 +1983,13 @@ apiRouter.get(
       .prepare('SELECT * FROM recruitment_rounds ORDER BY created_at DESC LIMIT 1')
       .get() as RecruitmentRound;
 
-    const departments = db
-      .prepare('SELECT * FROM departments WHERE round_id = ? ORDER BY name ASC')
-      .all(round.id) as Department[];
-
-    const deptQuotaInfo = departments.map((d) => {
-      const assigned = db
-        .prepare(`
-          SELECT COUNT(*) as cnt
-          FROM assignments a
-          JOIN applications app ON app.id = a.application_id
-          WHERE a.department_id = ? AND a.status = 'confirmed' AND app.status != 'withdrawn'
-        `)
-        .get(d.id) as { cnt: number };
-      const rem = Math.max(0, d.quota - assigned.cnt);
-      return {
-        id: d.id,
-        name: d.name,
-        quota: d.quota,
-        assignedCount: assigned.cnt,
-        remainingQuota: rem,
-        description: d.description,
-      };
-    });
-
-    const deptMap = new Map(departments.map((d) => [d.id, d.name]));
+    const initialDeptQuotaInfo = syncAndGetDepartmentsWithQuotas(round.id);
+    const deptMap = new Map(initialDeptQuotaInfo.map((d) => [d.id, d.name]));
 
     const pendingApps = db
       .prepare(`
         SELECT * FROM applications
-        WHERE round_id = ? AND status IN ('confirmed_joined', 'assigned')
+        WHERE round_id = ? AND status = 'confirmed_joined'
         ORDER BY updated_at ASC
       `)
       .all(round.id) as Application[];
@@ -1514,11 +2000,15 @@ apiRouter.get(
 
     const candidatesForAi = pendingApps.map((a) => {
       const enriched = enrichApplication(a);
+      const computedInterviewScore =
+        enriched.scorecards && enriched.scorecards.length > 0
+          ? computeTotalScore(enriched.scorecards, criteria)
+          : null;
       const totalScore =
         enriched.selection_decision?.total_score ??
-        computeTotalScore(enriched.scorecards || [], criteria) ??
+        computedInterviewScore ??
         enriched.screening_score ??
-        80;
+        0;
       return {
         applicationId: a.id,
         fullName: a.full_name,
@@ -1546,12 +2036,27 @@ apiRouter.get(
       });
 
     if (needsGeneration && candidatesForAi.length > 0) {
-      const aiResult = await generateDepartmentAssignments(candidatesForAi, deptQuotaInfo);
+      const aiResult = await generateDepartmentAssignments(candidatesForAi, initialDeptQuotaInfo);
       usedAi = aiResult.usedAi;
       aiMessage = aiResult.aiMessage;
       const nowIso = getSystemNowIso();
 
       for (const item of aiResult.suggestions) {
+        // Re-check application status after async AI call so we never overwrite an already-confirmed candidate
+        const currentApp = db
+          .prepare('SELECT status FROM applications WHERE id = ?')
+          .get(item.applicationId) as { status: string } | undefined;
+        if (!currentApp || currentApp.status !== 'confirmed_joined') {
+          continue;
+        }
+
+        if (!item.departmentId || !deptMap.has(item.departmentId)) {
+          // If no department has remaining quota, remove any stale unconfirmed suggestion
+          db.prepare("DELETE FROM assignments WHERE application_id = ? AND status = 'suggested'").run(
+            item.applicationId
+          );
+          continue;
+        }
         db.prepare(`
           INSERT INTO assignments (id, application_id, department_id, ai_suggested_dept_id, ai_reason, status, confirmed_by, notified_at, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, 'suggested', NULL, NULL, ?, ?)
@@ -1561,6 +2066,7 @@ apiRouter.get(
             ai_reason = excluded.ai_reason,
             status = 'suggested',
             updated_at = excluded.updated_at
+          WHERE assignments.status != 'confirmed'
         `).run(
           crypto.randomUUID(),
           item.applicationId,
@@ -1585,19 +2091,29 @@ apiRouter.get(
       });
     }
 
-    const enrichedCandidates = pendingApps.map(enrichApplication);
-    const completedAssigned = db
+    // Re-query current pending, completed, and department quotas AFTER async AI generation
+    const latestPendingApps = db
       .prepare(`
         SELECT * FROM applications
-        WHERE round_id = ? AND status = 'completed'
-        ORDER BY finished_at DESC
+        WHERE round_id = ? AND status = 'confirmed_joined'
+        ORDER BY updated_at ASC
       `)
       .all(round.id) as Application[];
 
+    const completedAssigned = db
+      .prepare(`
+        SELECT * FROM applications
+        WHERE round_id = ? AND status IN ('assigned', 'completed')
+        ORDER BY COALESCE(finished_at, updated_at) DESC
+      `)
+      .all(round.id) as Application[];
+
+    const latestDeptQuotaInfo = syncAndGetDepartmentsWithQuotas(round.id);
+
     return res.json({
-      candidates: enrichedCandidates,
+      candidates: latestPendingApps.map(enrichApplication),
       completedCandidates: completedAssigned.map(enrichApplication),
-      departments: deptQuotaInfo,
+      departments: latestDeptQuotaInfo,
       usedAi,
       aiMessage,
     });
@@ -1621,6 +2137,13 @@ apiRouter.put(
 
     if (!app) {
       return res.status(404).json({ error: 'Không tìm thấy hồ sơ.' });
+    }
+
+    const dept = db
+      .prepare('SELECT * FROM departments WHERE id = ? AND round_id = ?')
+      .get(departmentId, app.round_id) as Department | undefined;
+    if (!dept) {
+      return res.status(400).json({ error: `Ban không hợp lệ: ${departmentId}` });
     }
 
     const nowIso = getSystemNowIso();
@@ -1667,7 +2190,7 @@ apiRouter.post(
           SELECT a.application_id as applicationId, a.department_id as departmentId
           FROM assignments a
           JOIN applications app ON app.id = a.application_id
-          WHERE app.round_id = ? AND app.status IN ('confirmed_joined', 'assigned') AND a.status = 'suggested'
+          WHERE app.round_id = ? AND app.status IN ('confirmed_joined', 'assigned') AND a.status = 'suggested' AND a.department_id != ''
         `)
         .all(round.id) as Array<{ applicationId: string; departmentId: string }>;
       targetAssignments = pendingRows;
@@ -1677,20 +2200,44 @@ apiRouter.post(
       return res.status(400).json({ error: 'Không có ứng viên nào đang chờ chốt phân công.' });
     }
 
-    // Validate department quotas strictly before committing
+    // Deduplicate by applicationId (keep last) and validate each application & department strictly before committing
+    const dedupedMap = new Map<string, string>();
+    for (const item of targetAssignments) {
+      if (!item?.applicationId || !item?.departmentId) {
+        return res.status(400).json({ error: 'Thiếu applicationId hoặc departmentId trong danh sách phân công.' });
+      }
+      dedupedMap.set(item.applicationId, item.departmentId);
+    }
+
     const departments = db
       .prepare('SELECT * FROM departments WHERE round_id = ?')
       .all(round.id) as Department[];
 
     const deptMap = new Map(departments.map((d) => [d.id, d]));
     const batchCountByDept = new Map<string, number>();
+    const targetAppsMap = new Map<string, Application>();
 
-    for (const item of targetAssignments) {
-      if (!deptMap.has(item.departmentId)) {
-        return res.status(400).json({ error: `Ban không hợp lệ: ${item.departmentId}` });
+    for (const [applicationId, departmentId] of dedupedMap.entries()) {
+      if (!deptMap.has(departmentId)) {
+        return res.status(400).json({ error: `Ban không hợp lệ: ${departmentId}` });
       }
-      batchCountByDept.set(item.departmentId, (batchCountByDept.get(item.departmentId) || 0) + 1);
+      const app = db
+        .prepare('SELECT * FROM applications WHERE id = ?')
+        .get(applicationId) as Application | undefined;
+      if (!app) {
+        return res.status(404).json({ error: `Không tìm thấy hồ sơ ứng viên: ${applicationId}` });
+      }
+      if (!['confirmed_joined', 'assigned'].includes(app.status)) {
+        return res.status(400).json({
+          error: `Ứng viên "${app.full_name}" đang ở trạng thái "${app.status}", chưa xác nhận tham gia nhóm (confirmed_joined) nên chưa thể chốt phân ban.`,
+        });
+      }
+      targetAppsMap.set(applicationId, app);
+      batchCountByDept.set(departmentId, (batchCountByDept.get(departmentId) || 0) + 1);
     }
+
+    const targetAppIds = Array.from(dedupedMap.keys());
+    const placeholders = targetAppIds.map(() => '?').join(',');
 
     for (const [deptId, addCount] of batchCountByDept.entries()) {
       const dept = deptMap.get(deptId)!;
@@ -1699,11 +2246,14 @@ apiRouter.post(
           SELECT COUNT(*) as cnt
           FROM assignments a
           JOIN applications app ON app.id = a.application_id
-          WHERE a.department_id = ? AND a.status = 'confirmed' AND app.status != 'withdrawn'
+          WHERE a.department_id = ?
+            AND a.status = 'confirmed'
+            AND app.status != 'withdrawn'
+            AND a.application_id NOT IN (${placeholders})
         `)
-        .get(deptId) as { cnt: number };
+        .get(deptId, ...targetAppIds) as { cnt: number };
 
-      const remaining = dept.quota - alreadyConfirmed.cnt;
+      const remaining = Math.max(0, dept.quota - alreadyConfirmed.cnt);
       if (addCount > remaining) {
         return res.status(400).json({
           error: `Vượt quá chỉ tiêu của ${dept.name}: chỉ còn ${remaining} chỉ tiêu nhưng bạn đang chọn phân công ${addCount} ứng viên.`,
@@ -1714,64 +2264,113 @@ apiRouter.post(
     const nowIso = getSystemNowIso();
     const completedIds: string[] = [];
 
-    for (const item of targetAssignments) {
-      const app = db
-        .prepare('SELECT * FROM applications WHERE id = ?')
-        .get(item.applicationId) as Application | undefined;
+    const tx = db.transaction(() => {
+      for (const [applicationId, departmentId] of dedupedMap.entries()) {
+        const app = targetAppsMap.get(applicationId)!;
+        const dept = deptMap.get(departmentId)!;
 
-      if (!app || !['confirmed_joined', 'assigned'].includes(app.status)) continue;
+        // Upsert assignment record so `assignments` table ALWAYS has a confirmed row before completing
+        db.prepare(`
+          INSERT INTO assignments (
+            id, application_id, department_id, ai_suggested_dept_id, ai_reason, status, confirmed_by, notified_at, created_at, updated_at
+          )
+          VALUES (?, ?, ?, ?, 'HR duyệt và chốt phân công', 'confirmed', ?, ?, ?, ?)
+          ON CONFLICT(application_id) DO UPDATE SET
+            department_id = excluded.department_id,
+            status = 'confirmed',
+            confirmed_by = excluded.confirmed_by,
+            notified_at = excluded.notified_at,
+            updated_at = excluded.updated_at
+        `).run(
+          crypto.randomUUID(),
+          app.id,
+          departmentId,
+          departmentId,
+          req.user!.id,
+          nowIso,
+          nowIso,
+          nowIso
+        );
 
-      const dept = deptMap.get(item.departmentId)!;
+        const verifiedAssignment = db
+          .prepare("SELECT id, department_id, status FROM assignments WHERE application_id = ? AND status = 'confirmed'")
+          .get(app.id) as { id: string; department_id: string; status: string } | undefined;
 
-      db.prepare(`
-        UPDATE assignments
-        SET department_id = ?, status = 'confirmed', confirmed_by = ?, notified_at = ?, updated_at = ?
-        WHERE application_id = ?
-      `).run(item.departmentId, req.user!.id, nowIso, nowIso, app.id);
+        if (!verifiedAssignment || verifiedAssignment.department_id !== departmentId) {
+          throw new Error(`Không thể tạo bản ghi phân công hợp lệ cho hồ sơ ${app.id}.`);
+        }
 
-      if (app.status === 'confirmed_joined') {
+        if (app.status === 'confirmed_joined') {
+          transition({
+            applicationId: app.id,
+            nextStatus: 'assigned',
+            actor: `user:${req.user!.id}`,
+            action: 'HR_CONFIRM_ASSIGNMENT',
+            ruleApplied: 'HR Confirmed Department Assignment (Within Quota)',
+            inputSnapshot: { departmentId: dept.id, departmentName: dept.name, assignmentId: verifiedAssignment.id },
+            resultText: `HR (${req.user!.full_name}) đã duyệt và chốt phân công vào ${dept.name}.`,
+            timestampIso: nowIso,
+          });
+        }
+
         transition({
           applicationId: app.id,
-          nextStatus: 'assigned',
-          actor: `user:${req.user!.id}`,
-          action: 'HR_CONFIRM_ASSIGNMENT',
-          ruleApplied: 'HR Confirmed Department Assignment (Within Quota)',
-          inputSnapshot: { departmentId: dept.id, departmentName: dept.name },
-          resultText: `HR (${req.user!.full_name}) đã duyệt và chốt phân công vào ${dept.name}.`,
+          nextStatus: 'completed',
+          actor: 'system',
+          action: 'SEND_ASSIGNMENT_AND_COMPLETE',
+          ruleApplied: 'Step 14: Send Department Assignment Info -> End Case "Hoàn tất quy trình tuyển CTV"',
+          inputSnapshot: { departmentId: dept.id, departmentName: dept.name, assignmentId: verifiedAssignment.id },
+          resultText: `Đã gửi thông báo phân công ${dept.name} và kết thúc "Hoàn tất quy trình tuyển CTV".`,
+          endReason: 'completed',
           timestampIso: nowIso,
         });
+
+        NotificationService.send({
+          applicationId: app.id,
+          toEmail: app.email,
+          templateKey: 'assignment_info',
+          variables: {
+            full_name: app.full_name,
+            department: dept.name,
+            link: round.group_link,
+          },
+          createdAt: nowIso,
+        });
+
+        completedIds.push(app.id);
       }
+    });
 
-      transition({
-        applicationId: app.id,
-        nextStatus: 'completed',
-        actor: 'system',
-        action: 'SEND_ASSIGNMENT_AND_COMPLETE',
-        ruleApplied: 'Step 14: Send Department Assignment Info -> End Case "Hoàn tất quy trình tuyển CTV"',
-        inputSnapshot: { departmentId: dept.id, departmentName: dept.name },
-        resultText: `Đã gửi thông báo phân công ${dept.name} và kết thúc "Hoàn tất quy trình tuyển CTV".`,
-        endReason: 'completed',
-        timestampIso: nowIso,
+    try {
+      tx();
+    } catch (err) {
+      return res.status(400).json({
+        error: err instanceof Error ? err.message : 'Không thể chốt phân công.',
       });
-
-      NotificationService.send({
-        applicationId: app.id,
-        toEmail: app.email,
-        templateKey: 'assignment_info',
-        variables: {
-          full_name: app.full_name,
-          department: dept.name,
-          link: round.group_link,
-        },
-        createdAt: nowIso,
-      });
-
-      completedIds.push(app.id);
     }
+
+    const updatedDeptQuotaInfo = syncAndGetDepartmentsWithQuotas(round.id);
+    const remainingPendingApps = db
+      .prepare(`
+        SELECT * FROM applications
+        WHERE round_id = ? AND status = 'confirmed_joined'
+        ORDER BY updated_at ASC
+      `)
+      .all(round.id) as Application[];
+    const completedAssigned = db
+      .prepare(`
+        SELECT * FROM applications
+        WHERE round_id = ? AND status IN ('assigned', 'completed')
+        ORDER BY COALESCE(finished_at, updated_at) DESC
+      `)
+      .all(round.id) as Application[];
 
     return res.json({
       confirmedCount: completedIds.length,
       completedIds,
+      departments: updatedDeptQuotaInfo,
+      candidates: remainingPendingApps.map(enrichApplication),
+      completedCandidates: completedAssigned.map(enrichApplication),
     });
   }
 );
@@ -1949,7 +2548,7 @@ apiRouter.get(
       },
       {
         key: 'expired_supplement',
-        label: 'Bị loại vì quá hạn bổ sung',
+        label: 'Bị loại vì quá hạn',
         count: apps.filter((a) => a.end_reason === 'expired_supplement' || a.status === 'expired_supplement').length,
         color: '#9333EA',
       },
@@ -1963,15 +2562,16 @@ apiRouter.get(
 
     // 3. Cycle Time Calculation (from submitted_at to finished_at)
     const finishedApps = apps.filter((a) => a.submitted_at && a.finished_at);
-    let avgCycleTimeHours = 0;
+    let avgCycleTimeHours: number | null = null;
+    let avgCycleTimeDays: number | null = null;
     if (finishedApps.length > 0) {
       const sumHours = finishedApps.reduce((acc, a) => {
-        const diffMs = new Date(a.finished_at!).getTime() - new Date(a.submitted_at).getTime();
-        return acc + Math.max(0.5, diffMs / (1000 * 3600));
+        const diffMs = Math.max(0, new Date(a.finished_at!).getTime() - new Date(a.submitted_at).getTime());
+        return acc + diffMs / (1000 * 3600);
       }, 0);
-      avgCycleTimeHours = Math.round((sumHours / finishedApps.length) * 10) / 10;
+      avgCycleTimeHours = Math.round((sumHours / finishedApps.length) * 100) / 100;
+      avgCycleTimeDays = Math.round((avgCycleTimeHours / 24) * 100) / 100;
     }
-    const avgCycleTimeDays = Math.round((avgCycleTimeHours / 24) * 10) / 10;
 
     // 4. Missing fields rate, auto-reject rate, reminders count
     const everSupplementedCount = apps.filter(
@@ -2015,6 +2615,7 @@ apiRouter.get(
       metrics: {
         avgCycleTimeHours,
         avgCycleTimeDays,
+        finishedCount: finishedApps.length,
         missingInfoRate,
         autoRejectRate,
         remindersSentCount: reminderNotifs.cnt,
@@ -2024,10 +2625,20 @@ apiRouter.get(
         hrPendingAssignmentCount,
         bcnPendingCount: bcnPendingScoreOrDecideCount,
       },
+      bth32Automation: {
+        totalActivities: 26,
+        manualCount: 10,
+        manualPct: 38.5,
+        ruleCount: 15,
+        rulePct: 57.7,
+        aiCount: 1,
+        aiPct: 3.8,
+        agentCount: 0,
+      },
       stageWaitTimes,
       asIsComparison: {
         asIsCycleDays: 12,
-        toBeCycleDays: avgCycleTimeDays || 3.4,
+        toBeCycleDays: avgCycleTimeDays,
         asIsHandoffs: 11,
         toBeHandoffs: 4,
         asIsManualScheduling: 'HR nhắn tin xếp lịch từng người (mất 2–3 ngày)',
@@ -2050,18 +2661,25 @@ apiRouter.post(
   requireAuth,
   requireRole('admin', 'hr', 'board'),
   (req: AuthenticatedRequest, res: Response) => {
-    const result = seedDatabase(true);
+    const withSample = req.body?.mode === 'sample' || req.body?.withSample === true;
+    const result = seedDatabase(true, withSample);
+    const msg = withSample
+      ? `Đã nạp lại dữ liệu mẫu thành công (${result.seededApplications} hồ sơ ứng viên).`
+      : 'Đã đặt lại đợt tuyển trống thành công (0 hồ sơ ứng viên).';
+
     writeAuditLog({
       applicationId: null,
       actor: `user:${req.user!.id}`,
       action: 'ADMIN_RESEED_DATABASE',
-      ruleApplied: 'Reset & Load Sample Dataset (42 Cases)',
+      ruleApplied: withSample
+        ? 'Reset & Seed Sample Dataset (6 Representative Cases)'
+        : 'Reset Recruitment Round to Clean State (0 Applications)',
       inputSnapshot: result,
-      result: `Đã nạp lại dữ liệu mẫu thành công (${result.seededApplications} hồ sơ ứng viên).`,
+      result: msg,
       createdAt: getSystemNowIso(),
     });
     return res.json({
-      message: `Đã nạp lại ${result.seededApplications} hồ sơ mẫu thành công.`,
+      message: msg,
       ...result,
       systemNow: getSystemNowIso(),
     });
@@ -2166,91 +2784,331 @@ apiRouter.put(
       .prepare('SELECT * FROM recruitment_rounds ORDER BY created_at DESC LIMIT 1')
       .get() as RecruitmentRound;
 
+    // Validate all parameters before saving (F09)
     if (round && currentRound) {
-      db.prepare(`
-        UPDATE recruitment_rounds
-        SET
-          name = ?,
-          event_name = ?,
-          status = ?,
-          supplement_max_rounds = ?,
-          supplement_deadline_days = ?,
-          remind_after_days = ?,
-          unbook_after_days = ?,
-          threshold_x = ?,
-          threshold_y = ?,
-          near_threshold_margin = ?,
-          min_scorecards_per_interview = ?,
-          group_link = ?,
-          updated_at = ?
-        WHERE id = ?
-      `).run(
-        sanitizeText(round.name) || currentRound.name,
-        sanitizeText(round.event_name) || currentRound.event_name,
-        round.status || currentRound.status,
-        Number(round.supplement_max_rounds ?? currentRound.supplement_max_rounds),
-        Number(round.supplement_deadline_days ?? currentRound.supplement_deadline_days),
-        Number(round.remind_after_days ?? currentRound.remind_after_days),
-        Number(round.unbook_after_days ?? currentRound.unbook_after_days),
-        Number(round.threshold_x ?? currentRound.threshold_x),
-        Number(round.threshold_y ?? currentRound.threshold_y),
-        Number(round.near_threshold_margin ?? currentRound.near_threshold_margin),
-        Number(round.min_scorecards_per_interview ?? currentRound.min_scorecards_per_interview),
-        sanitizeText(round.group_link) || currentRound.group_link,
-        nowIso,
-        currentRound.id
+      const nextStatus = round.status ?? currentRound.status;
+      if (!['draft', 'open', 'closed'].includes(nextStatus)) {
+        return res.status(400).json({ error: 'Trạng thái đợt tuyển không hợp lệ (chỉ nhận draft, open, closed).' });
+      }
+
+      const nextThresholdX = Number(round.threshold_x ?? currentRound.threshold_x);
+      const nextThresholdY = Number(round.threshold_y ?? currentRound.threshold_y);
+      const nextMargin = Number(round.near_threshold_margin ?? currentRound.near_threshold_margin);
+      const nextSuppMaxRounds = Number(round.supplement_max_rounds ?? currentRound.supplement_max_rounds);
+      const nextSuppDays = Number(round.supplement_deadline_days ?? currentRound.supplement_deadline_days);
+      const nextRemindDays = Number(round.remind_after_days ?? currentRound.remind_after_days);
+      const nextUnbookDays = Number(round.unbook_after_days ?? currentRound.unbook_after_days);
+      const nextMinScorecards = Number(
+        round.min_scorecards_per_interview ?? currentRound.min_scorecards_per_interview
       );
+
+      if (
+        !Number.isFinite(nextThresholdX) ||
+        !Number.isFinite(nextThresholdY) ||
+        nextThresholdY < 0 ||
+        nextThresholdX > 100 ||
+        nextThresholdY >= nextThresholdX
+      ) {
+        return res.status(400).json({
+          error: 'Ngưỡng điểm sơ loại không hợp lệ: yêu cầu 0 <= Ngưỡng Y < Ngưỡng X <= 100.',
+        });
+      }
+
+      if (!Number.isFinite(nextMargin) || nextMargin < 0 || nextMargin > nextThresholdY) {
+        return res.status(400).json({
+          error: 'Biên độ sát ngưỡng Y không hợp lệ: yêu cầu 0 <= Biên độ <= Ngưỡng Y.',
+        });
+      }
+
+      if (!Number.isFinite(nextSuppDays) || nextSuppDays <= 0) {
+        return res.status(400).json({
+          error: 'Thời hạn bổ sung hồ sơ phải lớn hơn 0 ngày.',
+        });
+      }
+
+      if (!Number.isFinite(nextSuppMaxRounds) || nextSuppMaxRounds < 1) {
+        return res.status(400).json({
+          error: 'Số lần bổ sung tối đa phải >= 1.',
+        });
+      }
+
+      if (
+        !Number.isFinite(nextRemindDays) ||
+        !Number.isFinite(nextUnbookDays) ||
+        nextRemindDays <= 0 ||
+        nextUnbookDays <= nextRemindDays
+      ) {
+        return res.status(400).json({
+          error: 'Thời gian nhắc lịch và gạch tên không hợp lệ: yêu cầu 0 < Nhắc sau (ngày) < Gạch tên sau (ngày).',
+        });
+      }
+
+      if (!Number.isFinite(nextMinScorecards) || nextMinScorecards < 1) {
+        return res.status(400).json({
+          error: 'Số phiếu chấm tối thiểu mỗi ứng viên phải >= 1.',
+        });
+      }
+
+      const nextOpenAt = round.open_at ? new Date(String(round.open_at)) : new Date(currentRound.open_at);
+      const nextCloseAt = round.close_at ? new Date(String(round.close_at)) : new Date(currentRound.close_at);
+      if (
+        Number.isNaN(nextOpenAt.getTime()) ||
+        Number.isNaN(nextCloseAt.getTime()) ||
+        nextCloseAt.getTime() <= nextOpenAt.getTime()
+      ) {
+        return res.status(400).json({
+          error: 'Thời gian đóng đơn (close_at) phải lớn hơn thời gian mở đơn (open_at).',
+        });
+      }
     }
 
     if (Array.isArray(departments)) {
-      const updateDept = db.prepare(`
-        UPDATE departments SET name = ?, quota = ?, description = ?, updated_at = ? WHERE id = ?
-      `);
       for (const d of departments) {
-        if (d.id) {
-          updateDept.run(sanitizeText(d.name), Number(d.quota), sanitizeText(d.description), nowIso, d.id);
+        const q = Number(d.quota);
+        if (!Number.isFinite(q) || q < 0 || !Number.isInteger(q)) {
+          return res.status(400).json({
+            error: `Chỉ tiêu (quota) của ban "${d.name || d.id}" không hợp lệ: phải là số nguyên >= 0.`,
+          });
         }
       }
     }
 
     if (Array.isArray(criteria)) {
-      const updateCrit = db.prepare(`
-        UPDATE scoring_criteria SET name = ?, weight = ?, max_score = ?, updated_at = ? WHERE id = ?
-      `);
       for (const c of criteria) {
-        if (c.id) {
-          updateCrit.run(sanitizeText(c.name), Number(c.weight), Number(c.max_score || 10), nowIso, c.id);
+        const w = Number(c.weight);
+        const m = Number(c.max_score ?? 10);
+        if (!Number.isFinite(w) || w <= 0 || !Number.isFinite(m) || m <= 0) {
+          return res.status(400).json({
+            error: `Tiêu chí chấm điểm "${c.name || c.id}" không hợp lệ: trọng số (weight) và thang điểm tối đa (max_score) phải > 0.`,
+          });
         }
       }
     }
 
-    if (hardConditions) {
-      setSetting('hard_conditions', JSON.stringify(hardConditions));
-    }
-
     if (timeScale !== undefined) {
-      setSetting('TIME_SCALE', String(Math.max(1, Number(timeScale) || 1)));
+      const ts = Number(timeScale);
+      if (!Number.isFinite(ts) || ts <= 0) {
+        return res.status(400).json({ error: 'Hệ số thời gian (TIME_SCALE) phải > 0.' });
+      }
     }
 
-    if (templates) {
-      NotificationService.saveTemplates(templates);
-    }
+    const tx = db.transaction(() => {
+      if (round && currentRound) {
+        db.prepare(`
+          UPDATE recruitment_rounds
+          SET
+            name = ?,
+            event_name = ?,
+            status = ?,
+            open_at = ?,
+            close_at = ?,
+            supplement_max_rounds = ?,
+            supplement_deadline_days = ?,
+            remind_after_days = ?,
+            unbook_after_days = ?,
+            threshold_x = ?,
+            threshold_y = ?,
+            near_threshold_margin = ?,
+            min_scorecards_per_interview = ?,
+            group_link = ?,
+            updated_at = ?
+          WHERE id = ?
+        `).run(
+          sanitizeText(round.name) || currentRound.name,
+          sanitizeText(round.event_name) || currentRound.event_name,
+          round.status || currentRound.status,
+          round.open_at ? new Date(String(round.open_at)).toISOString() : currentRound.open_at,
+          round.close_at ? new Date(String(round.close_at)).toISOString() : currentRound.close_at,
+          Number(round.supplement_max_rounds ?? currentRound.supplement_max_rounds),
+          Number(round.supplement_deadline_days ?? currentRound.supplement_deadline_days),
+          Number(round.remind_after_days ?? currentRound.remind_after_days),
+          Number(round.unbook_after_days ?? currentRound.unbook_after_days),
+          Number(round.threshold_x ?? currentRound.threshold_x),
+          Number(round.threshold_y ?? currentRound.threshold_y),
+          Number(round.near_threshold_margin ?? currentRound.near_threshold_margin),
+          Number(round.min_scorecards_per_interview ?? currentRound.min_scorecards_per_interview),
+          sanitizeText(round.group_link) || currentRound.group_link,
+          nowIso,
+          currentRound.id
+        );
+      }
 
-    writeAuditLog({
-      applicationId: null,
-      actor: `user:${req.user!.id}`,
-      action: 'UPDATE_SYSTEM_SETTINGS',
-      ruleApplied: 'Admin Configuration Updated',
-      inputSnapshot: {
-        thresholdX: round?.threshold_x,
-        thresholdY: round?.threshold_y,
-        nearThresholdMargin: round?.near_threshold_margin,
-        timeScale,
-      },
-      result: `Đã cập nhật cấu hình hệ thống và ngưỡng quy tắc tự động.`,
-      createdAt: nowIso,
+      if (Array.isArray(departments)) {
+        const updateDept = db.prepare(`
+          UPDATE departments SET name = ?, quota = ?, description = ?, updated_at = ? WHERE id = ?
+        `);
+        for (const d of departments) {
+          if (d.id) {
+            updateDept.run(sanitizeText(d.name), Number(d.quota), sanitizeText(d.description), nowIso, d.id);
+          }
+        }
+      }
+
+      if (Array.isArray(criteria)) {
+        const updateCrit = db.prepare(`
+          UPDATE scoring_criteria SET name = ?, weight = ?, max_score = ?, updated_at = ? WHERE id = ?
+        `);
+        for (const c of criteria) {
+          if (c.id) {
+            updateCrit.run(sanitizeText(c.name), Number(c.weight), Number(c.max_score || 10), nowIso, c.id);
+          }
+        }
+      }
+
+      if (hardConditions) {
+        setSetting('hard_conditions', JSON.stringify(hardConditions));
+      }
+
+      if (timeScale !== undefined) {
+        setSetting('TIME_SCALE', String(Number(timeScale)));
+      }
+
+      if (templates) {
+        NotificationService.saveTemplates(templates);
+      }
+
+      writeAuditLog({
+        applicationId: null,
+        actor: `user:${req.user!.id}`,
+        action: 'UPDATE_SYSTEM_SETTINGS',
+        ruleApplied: 'Admin Configuration Updated',
+        inputSnapshot: {
+          thresholdX: round?.threshold_x,
+          thresholdY: round?.threshold_y,
+          nearThresholdMargin: round?.near_threshold_margin,
+          timeScale,
+        },
+        result: `Đã cập nhật cấu hình hệ thống và ngưỡng quy tắc tự động.`,
+        createdAt: nowIso,
+      });
     });
+
+    tx();
 
     return res.json({ message: 'Đã lưu cài đặt hệ thống thành công.', systemNow: getSystemNowIso() });
   }
 );
+
+// Deterministic rule testing endpoint before opening round ("Chính xác: cùng đầu vào cho cùng đầu ra, kiểm thử luật trước mỗi đợt tuyển")
+apiRouter.post(
+  '/admin/test-screening',
+  requireAuth,
+  requireRole('admin', 'hr', 'board'),
+  (req: AuthenticatedRequest, res: Response) => {
+    const round = db
+      .prepare('SELECT * FROM recruitment_rounds ORDER BY created_at DESC LIMIT 1')
+      .get() as RecruitmentRound;
+
+    const thresholdX = Number(req.body?.threshold_x ?? req.body?.thresholdX ?? round.threshold_x);
+    const thresholdY = Number(req.body?.threshold_y ?? req.body?.thresholdY ?? round.threshold_y);
+    const margin = Number(
+      req.body?.near_threshold_margin ?? req.body?.nearThresholdMargin ?? round.near_threshold_margin
+    );
+
+    let hardConfig = {
+      requireValidEmail: true,
+      requireActiveStudentId: true,
+      requireValidPhone: true,
+      requireTimeCommitment: true,
+    };
+    try {
+      const raw = getSetting('hard_conditions', '');
+      if (raw) hardConfig = { ...hardConditionsFromRaw(raw), ...hardConfig };
+    } catch {
+      // ignore
+    }
+    if (req.body?.hardConditions) {
+      hardConfig = { ...hardConfig, ...req.body.hardConditions };
+    }
+
+    const body = req.body || {};
+    const commitmentConfirmed =
+      body.commitment_confirmed !== undefined
+        ? Boolean(body.commitment_confirmed)
+        : body.timeCommitmentConfirmed !== undefined
+          ? Boolean(body.timeCommitmentConfirmed)
+          : true;
+    const isActiveStudent =
+      body.is_active_student !== undefined
+        ? Boolean(body.is_active_student)
+        : body.hasActiveStudentId !== undefined
+          ? Boolean(body.hasActiveStudentId)
+          : true;
+    const experienceText = String(
+      body.experience ?? body.skillsText ?? body.motivationText ?? ''
+    );
+    const studentId = String(body.student_id ?? body.studentId ?? '231121521999');
+    const className = String(body.class_name ?? body.className ?? '49K01.1');
+    const cvUrl = String(body.cv_url ?? body.cvUrl ?? '');
+    const secondChoiceDeptId = String(
+      body.second_choice_dept_id ?? body.secondChoiceDeptId ?? 'dept-er'
+    );
+
+    const evalRes = evaluateScreeningProfile(
+      {
+        email: String(body.email ?? 'ungvien@due.udn.vn'),
+        student_id: studentId,
+        phone: String(body.phone ?? '0905888999'),
+        class_name: className,
+        experience: experienceText,
+        cv_url: cvUrl,
+        second_choice_dept_id: secondChoiceDeptId,
+        commitment_confirmed: commitmentConfirmed,
+        is_active_student: isActiveStudent,
+      },
+      hardConfig
+    );
+
+    const branch = screenByThreshold(evalRes.score, evalRes.hardConditionsPassed, thresholdX, thresholdY);
+    const nearThreshold =
+      branch === 'clear_fail' &&
+      isNearThreshold(evalRes.score, evalRes.hardConditionsPassed, thresholdY, margin);
+
+    const branchLabel =
+      branch === 'clear_pass'
+        ? `Đạt rõ (Điểm ${evalRes.score} >= X=${thresholdX} & đủ điều kiện cứng)`
+        : branch === 'needs_review'
+          ? `Cần xem xét (${thresholdY} <= Điểm ${evalRes.score} < ${thresholdX} & đủ điều kiện cứng)`
+          : !evalRes.hardConditionsPassed
+            ? `Loại rõ (Vi phạm điều kiện cứng: ${evalRes.violatedConditions.join('; ')})`
+            : `Loại rõ (Điểm ${evalRes.score} < Y=${thresholdY}${nearThreshold ? ' — Hồ sơ sát ngưỡng Y' : ''})`;
+
+    const bd = evalRes.scoreBreakdown;
+    const breakdownSummary = `Học vụ: ${bd.academic}/25đ | Kinh nghiệm: ${bd.experience}/45đ | Nguyện vọng 2: ${bd.choiceFlexibility}/15đ | CV/Portfolio: ${bd.cvPortfolio}/15đ`;
+
+    const evaluation = {
+      totalScore: evalRes.score,
+      score: evalRes.score,
+      scoreBreakdown: evalRes.scoreBreakdown,
+      hardConditionsPassed: evalRes.hardConditionsPassed,
+      violatedConditions: evalRes.violatedConditions,
+      branch,
+      nearThreshold,
+      explanation: `${branchLabel}. Chi tiết: ${breakdownSummary}`,
+    };
+
+    return res.json({
+      score: evalRes.score,
+      totalScore: evalRes.score,
+      scoreBreakdown: evalRes.scoreBreakdown,
+      hardConditionsPassed: evalRes.hardConditionsPassed,
+      violatedConditions: evalRes.violatedConditions,
+      branch,
+      nearThreshold,
+      explanation: evaluation.explanation,
+      thresholdX,
+      thresholdY,
+      margin,
+      evaluation,
+    });
+  }
+);
+
+function hardConditionsFromRaw(raw: string) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+

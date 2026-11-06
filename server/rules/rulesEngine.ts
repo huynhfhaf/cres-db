@@ -1,4 +1,4 @@
-import type { ApplicationStatus } from '../../src/types';
+import type { ApplicationStatus } from '../../src/types.ts';
 
 export interface ApplicationInputForCheck {
   full_name?: string | null;
@@ -311,12 +311,40 @@ export function canConvergeInterviewAndJoin(
   return Boolean(checkedInAt) && scorecardCount >= Math.max(1, minScorecards);
 }
 
+export const ALL_APPLICATION_STATUSES: ApplicationStatus[] = [
+  'submitted',
+  'checking',
+  'needs_supplement',
+  'supplement_submitted',
+  'expired_supplement',
+  'screening',
+  'clear_pass',
+  'needs_review',
+  'clear_fail',
+  'review_pass',
+  'review_fail',
+  'rejected_docs',
+  'invited_to_book',
+  'booked',
+  'no_booking',
+  'interviewing',
+  'scored',
+  'decided_pass',
+  'decided_fail',
+  'failed_interview',
+  'offer_sent',
+  'confirmed_joined',
+  'assigned',
+  'completed',
+  'withdrawn',
+];
+
 /**
  * Valid transitions map for central state machine `transition(application, nextStatus)`
  */
 export const ALLOWED_TRANSITIONS: Record<ApplicationStatus, ApplicationStatus[]> = {
   submitted: ['checking', 'withdrawn'],
-  checking: ['needs_supplement', 'screening', 'rejected_docs', 'expired_supplement', 'withdrawn'],
+  checking: ['needs_supplement', 'screening', 'expired_supplement', 'withdrawn'],
   needs_supplement: ['supplement_submitted', 'expired_supplement', 'withdrawn'],
   supplement_submitted: ['checking', 'withdrawn'],
   expired_supplement: [],
@@ -338,7 +366,7 @@ export const ALLOWED_TRANSITIONS: Record<ApplicationStatus, ApplicationStatus[]>
   offer_sent: ['confirmed_joined', 'withdrawn'],
   confirmed_joined: ['assigned', 'withdrawn'],
   assigned: ['completed', 'withdrawn'],
-  completed: [],
+  completed: ['withdrawn'],
   withdrawn: [],
 };
 
@@ -346,6 +374,7 @@ export function isValidStateTransition(
   currentStatus: ApplicationStatus,
   nextStatus: ApplicationStatus
 ): boolean {
+  if (!ALL_APPLICATION_STATUSES.includes(nextStatus)) return false;
   if (currentStatus === nextStatus) return true;
   const allowed = ALLOWED_TRANSITIONS[currentStatus] || [];
   return allowed.includes(nextStatus);
@@ -354,6 +383,7 @@ export function isValidStateTransition(
 /**
  * Pure deterministic fallback algorithm for department assignment when Gemini API is unavailable or returns invalid quota.
  * Ranks candidates by total_score DESC, assigns 1st choice if quota remains, else 2nd choice, else department with highest remaining quota.
+ * When all departments have 0 remaining quota, returns departmentId: '' ("Chưa thể phân công").
  */
 export function fallbackAssignmentSuggestion(
   candidates: Array<{
@@ -407,15 +437,25 @@ export function fallbackAssignmentSuggestion(
       }
     }
 
-    // Fallback to any department with remaining quota
-    let bestDeptId = departments[0]?.id || cand.firstChoiceDeptId;
-    let maxRem = -1;
+    // Fallback to any department with remaining quota > 0
+    let bestDeptId = '';
+    let maxRem = 0;
     for (const [deptId, info] of remaining.entries()) {
       if (info.count > maxRem) {
         maxRem = info.count;
         bestDeptId = deptId;
       }
     }
+
+    if (!bestDeptId || maxRem <= 0) {
+      results.push({
+        applicationId: cand.applicationId,
+        departmentId: '',
+        reason: 'Chưa thể phân công: Tất cả các ban đã hết chỉ tiêu nhận CTV.',
+      });
+      continue;
+    }
+
     const chosen = remaining.get(bestDeptId);
     if (chosen && chosen.count > 0) chosen.count -= 1;
     results.push({

@@ -12,6 +12,7 @@ import {
   RefreshCw,
   Send,
   ShieldCheck,
+  FastForward,
 } from 'lucide-react';
 import { apiRequest } from '../api';
 import type {
@@ -70,10 +71,13 @@ export function HrPortal({
   const [aiMessage, setAiMessage] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
 
-  // Outbox & Templates state
+  // Outbox, Templates & Threshold X/Y state
   const [outboxList, setOutboxList] = useState<NotificationItem[]>([]);
   const [templates, setTemplates] = useState<Record<string, { key: string; name: string; subject: string; body: string }>>({});
   const [selectedTplKey, setSelectedTplKey] = useState<string>('supplement_request');
+  const [thresholdXInput, setThresholdXInput] = useState<number>(round.threshold_x);
+  const [thresholdYInput, setThresholdYInput] = useState<number>(round.threshold_y);
+  const [nearMarginInput, setNearMarginInput] = useState<number>(round.near_threshold_margin);
 
   const loadApplications = async () => {
     setLoading(true);
@@ -98,10 +102,14 @@ export function HrPortal({
     }
   };
 
+  const aiReqSeqRef = React.useRef(0);
+
   const loadAiAssignments = async (refreshAi = false) => {
+    const reqId = ++aiReqSeqRef.current;
     setAiLoading(true);
     try {
       const res = await apiRequest(`/assignments/suggest${refreshAi ? '?refresh=true' : ''}`);
+      if (reqId !== aiReqSeqRef.current) return;
       setAiCandidates(res.candidates || []);
       setCompletedAssigned(res.completedCandidates || []);
       setDeptQuotas(res.departments || []);
@@ -110,12 +118,15 @@ export function HrPortal({
         setFeedback({ type: 'success', text: res.aiMessage || 'Đã cập nhật gợi ý phân ban từ AI.' });
       }
     } catch (err) {
+      if (reqId !== aiReqSeqRef.current) return;
       setFeedback({
         type: 'error',
         text: err instanceof Error ? err.message : 'Lỗi tải gợi ý phân ban',
       });
     } finally {
-      setAiLoading(false);
+      if (reqId === aiReqSeqRef.current) {
+        setAiLoading(false);
+      }
     }
   };
 
@@ -131,9 +142,35 @@ export function HrPortal({
     }
   };
 
+  const broadcastStateSync = () => {
+    try {
+      localStorage.setItem('cres_data_sync_ts', String(Date.now()));
+      window.dispatchEvent(new CustomEvent('cres-data-updated'));
+    } catch {
+      // ignore
+    }
+  };
+
   useEffect(() => {
     loadApplications();
   }, [statusFilter, deptFilter, searchQuery, minScore, sortBy, sortDir]);
+
+  useEffect(() => {
+    const handleSync = () => {
+      loadApplications();
+      if (activeTab === 'ai_assignment') {
+        loadAiAssignments(false);
+      } else if (activeTab === 'outbox') {
+        loadOutbox();
+      }
+    };
+    window.addEventListener('cres-data-updated', handleSync);
+    window.addEventListener('storage', handleSync);
+    return () => {
+      window.removeEventListener('cres-data-updated', handleSync);
+      window.removeEventListener('storage', handleSync);
+    };
+  }, [activeTab, statusFilter, deptFilter, searchQuery, minScore, sortBy, sortDir]);
 
   useEffect(() => {
     if (activeTab === 'ai_assignment') {
@@ -155,6 +192,8 @@ export function HrPortal({
       });
     }
   };
+
+  // Per To-Be & BTH 3.2: BCN decides interview pass/fail; HR reviews borderline docs & confirms department assignment.
 
   const handleExportCsv = () => {
     const targetRows =
@@ -211,7 +250,7 @@ export function HrPortal({
     if (reason.length < 3) {
       setFeedback({
         type: 'error',
-        text: 'Vui lòng nhập lý do duyệt (tối thiểu 3 ký tự) trước khi chốt Đạt / Không đạt.',
+        text: 'Bạn vui lòng nhập ghi chú nhận xét (tối thiểu 3 ký tự) trước khi xác nhận kết quả nhé.',
       });
       return;
     }
@@ -225,15 +264,15 @@ export function HrPortal({
         type: 'success',
         text:
           decision === 'pass'
-            ? 'Đã duyệt ĐẠT và tự động gửi link đặt lịch phỏng vấn cho ứng viên!'
-            : 'Đã duyệt KHÔNG ĐẠT và gửi thông báo kết thúc vòng hồ sơ.',
+            ? 'Đã duyệt hồ sơ ĐẠT và gửi thư mời chọn lịch phỏng vấn đến bạn ứng viên!'
+            : 'Đã ghi nhận kết quả vòng hồ sơ và gửi thư phản hồi đến bạn ứng viên.',
       });
       await loadApplications();
       onRefreshGlobal();
     } catch (err) {
       setFeedback({
         type: 'error',
-        text: err instanceof Error ? err.message : 'Lỗi khi duyệt hồ sơ',
+        text: err instanceof Error ? err.message : 'Chưa thể lưu kết quả duyệt hồ sơ',
       });
     }
   };
@@ -247,23 +286,23 @@ export function HrPortal({
           reason:
             reviewReasons[appId] ||
             (action === 'rescue_pass'
-              ? 'Bài tự luận thể hiện nhiệt huyết tốt dù điểm sát ngưỡng Y'
-              : `Điểm sơ loại thấp hơn ngưỡng Y (${round.threshold_y}đ)`),
+              ? 'Bài tự luận thể hiện sự nhiệt huyết và phù hợp với Câu lạc bộ Thương mại C-RES'
+              : 'Hồ sơ chưa đáp ứng đủ tiêu chí vòng đơn của đợt tuyển này'),
         }),
       });
       setFeedback({
         type: 'success',
         text:
           action === 'confirm_reject'
-            ? 'Đã xác nhận loại hồ sơ gần ngưỡng và gửi thông báo cho ứng viên.'
-            : 'Đã cứu hồ sơ gần ngưỡng sang ĐẠT và gửi link đặt lịch phỏng vấn.',
+            ? 'Đã xác nhận kết quả và gửi thư cảm ơn đến bạn ứng viên.'
+            : 'Đã duyệt ĐẠT hồ sơ và gửi thư mời chọn lịch phỏng vấn cho bạn ứng viên!',
       });
       await loadApplications();
       onRefreshGlobal();
     } catch (err) {
       setFeedback({
         type: 'error',
-        text: err instanceof Error ? err.message : 'Lỗi khi xử lý hồ sơ gần ngưỡng',
+        text: err instanceof Error ? err.message : 'Chưa thể xử lý hồ sơ này',
       });
     }
   };
@@ -276,14 +315,14 @@ export function HrPortal({
       });
       setFeedback({
         type: 'success',
-        text: `Đã xác nhận gửi thông báo loại hàng loạt cho ${res.confirmedCount} hồ sơ gần ngưỡng.`,
+        text: `Đã gửi thư phản hồi kết quả vòng hồ sơ cho ${res.confirmedCount} bạn ứng viên.`,
       });
       await loadApplications();
       onRefreshGlobal();
     } catch (err) {
       setFeedback({
         type: 'error',
-        text: err instanceof Error ? err.message : 'Lỗi khi xác nhận hàng loạt',
+        text: err instanceof Error ? err.message : 'Chưa thể gửi thông báo hàng loạt',
       });
     }
   };
@@ -298,58 +337,118 @@ export function HrPortal({
     } catch (err) {
       setFeedback({
         type: 'error',
-        text: err instanceof Error ? err.message : 'Lỗi khi đổi ban phân công',
+        text: err instanceof Error ? err.message : 'Chưa thể đổi ban phân công',
       });
     }
   };
 
   const handleConfirmAllAssignments = async () => {
     try {
+      const firstAvailableDept = deptQuotas.find((d) => d.remainingQuota > 0)?.id || '';
       const payload = aiCandidates.map((c) => ({
         applicationId: c.id,
-        departmentId: c.assignment?.department_id || c.first_choice_dept_id,
+        departmentId:
+          c.assignment?.department_id ||
+          (deptQuotas.find((d) => d.id === c.first_choice_dept_id && d.remainingQuota > 0)
+            ? c.first_choice_dept_id
+            : firstAvailableDept),
       }));
+
+      const missingDept = payload.find((p) => !p.departmentId);
+      if (missingDept) {
+        setFeedback({
+          type: 'error',
+          text: 'Chưa thể chốt phân công: Tất cả các ban hiện đã hết chỉ tiêu nhận CTV hoặc ứng viên chưa được chọn ban hợp lệ.',
+        });
+        return;
+      }
+
+      // Invalidate any older in-flight suggest request before confirming
+      aiReqSeqRef.current += 1;
+      setAiLoading(true);
       const res = await apiRequest('/assignments/confirm', {
         method: 'POST',
         body: JSON.stringify({ assignments: payload }),
       });
+      if (res.departments) setDeptQuotas(res.departments);
+      if (res.candidates) setAiCandidates(res.candidates);
+      if (res.completedCandidates) setCompletedAssigned(res.completedCandidates);
+      setAiLoading(false);
+
       setFeedback({
         type: 'success',
-        text: `Đã chốt phân công ban và gửi thông báo hoàn tất cho ${res.confirmedCount} CTV mới!`,
+        text: `Đã chốt phân ban và gửi thư chào mừng chính thức đến ${res.confirmedCount} Cộng tác viên mới của Câu lạc bộ Thương mại C-RES!`,
       });
       await loadAiAssignments(false);
       await loadApplications();
       onRefreshGlobal();
+      broadcastStateSync();
     } catch (err) {
+      setAiLoading(false);
       setFeedback({
         type: 'error',
-        text: err instanceof Error ? err.message : 'Lỗi khi chốt phân công ban',
+        text: err instanceof Error ? err.message : 'Chưa thể chốt phân công ban',
       });
     }
   };
 
-  const handleSaveTemplate = async () => {
+  const handleSaveTemplateAndThresholds = async () => {
     try {
       await apiRequest('/admin/settings', {
         method: 'PUT',
-        body: JSON.stringify({ templates }),
+        body: JSON.stringify({
+          templates,
+          round: {
+            ...round,
+            threshold_x: thresholdXInput,
+            threshold_y: thresholdYInput,
+            near_threshold_margin: nearMarginInput,
+          },
+        }),
       });
-      setFeedback({ type: 'success', text: 'Đã lưu cấu hình mẫu thư tự động.' });
+      setFeedback({
+        type: 'success',
+        text: `Đã lưu Mẫu thư thông báo và Ngưỡng sơ loại (X = ${thresholdXInput}đ, Y = ${thresholdYInput}đ, biên độ = ${nearMarginInput}đ).`,
+      });
+      onRefreshGlobal();
     } catch (err) {
       setFeedback({
         type: 'error',
-        text: err instanceof Error ? err.message : 'Lỗi lưu mẫu thư',
+        text: err instanceof Error ? err.message : 'Chưa thể lưu mẫu thư và ngưỡng X, Y',
+      });
+    }
+  };
+
+  const handleHrTimeTravel = async (days: number) => {
+    try {
+      const res = await apiRequest('/admin/time-travel', {
+        method: 'POST',
+        body: JSON.stringify({ days }),
+      });
+      const s = res.scanResult;
+      setFeedback({
+        type: 'success',
+        text: `Đã chạy Timer +${days} ngày: Quá hạn bổ sung (${s.expiredSupplementsCount}), Nhắc đặt lịch 1 ngày (${s.remindedBookingCount}), Gạch tên quá 2 ngày (${s.droppedNoBookingCount}).`,
+      });
+      await loadApplications();
+      onRefreshGlobal();
+      broadcastStateSync();
+    } catch (err) {
+      setFeedback({
+        type: 'error',
+        text: err instanceof Error ? err.message : 'Lỗi khi chạy Timer',
       });
     }
   };
 
   const needsReviewList = applications.filter((a) => a.status === 'needs_review');
   const nearThresholdList = applications.filter((a) => a.status === 'clear_fail');
+  const rejectedDocsList = applications.filter((a) => a.status === 'rejected_docs');
 
   return (
     <div className="space-y-6">
-      {/* Sub-navigation Bar for HR */}
-      <div className="bg-white border border-[#435B61]/20 rounded-xl p-2 flex flex-wrap items-center justify-between gap-2 shadow-2xs">
+      {/* Sub-navigation Bar for HR + Quick Timer Simulation */}
+      <div className="bg-white border border-slate-200 rounded-xl p-2.5 flex flex-wrap items-center justify-between gap-2 shadow-2xs">
         <div className="flex flex-wrap items-center gap-1.5">
           <button
             type="button"
@@ -357,10 +456,10 @@ export function HrPortal({
             className={`px-3.5 py-2 text-xs font-bold rounded-lg transition-colors whitespace-nowrap ${
               activeTab === 'spreadsheet'
                 ? 'bg-[#F36F00] text-white'
-                : 'text-[#435B61] hover:bg-[#F4F7F8]'
+                : 'text-slate-600 hover:bg-slate-100'
             }`}
           >
-            1. Bảng Sheet Hồ sơ ({applications.length})
+            1. Sheet Hồ sơ ({applications.length})
           </button>
           <button
             type="button"
@@ -370,11 +469,11 @@ export function HrPortal({
             }}
             className={`px-3.5 py-2 text-xs font-bold rounded-lg transition-colors whitespace-nowrap ${
               activeTab === 'needs_review'
-                ? 'bg-[#68A225] text-white'
-                : 'text-[#435B61] hover:bg-[#F4F7F8]'
+                ? 'bg-[#F36F00] text-white'
+                : 'text-slate-600 hover:bg-slate-100'
             }`}
           >
-            2. Hàng đợi Cần xem xét ({needsReviewList.length})
+            2. Duyệt hồ sơ còn lại ({needsReviewList.length})
           </button>
           <button
             type="button"
@@ -384,33 +483,52 @@ export function HrPortal({
             }}
             className={`px-3.5 py-2 text-xs font-bold rounded-lg transition-colors whitespace-nowrap ${
               activeTab === 'near_threshold'
-                ? 'bg-[#FDD000] text-[#26383C]'
-                : 'text-[#435B61] hover:bg-[#F4F7F8]'
+                ? 'bg-[#F36F00] text-white'
+                : 'text-slate-600 hover:bg-slate-100'
             }`}
           >
-            3. Loại rõ gần ngưỡng — Chờ xác nhận ({nearThresholdList.length})
+            3. Hồ sơ cần được xem xét ({nearThresholdList.length})
           </button>
           <button
             type="button"
             onClick={() => setActiveTab('ai_assignment')}
             className={`px-3.5 py-2 text-xs font-bold rounded-lg transition-colors whitespace-nowrap ${
               activeTab === 'ai_assignment'
-                ? 'bg-[#31B5D8] text-white'
-                : 'text-[#435B61] hover:bg-[#F4F7F8]'
+                ? 'bg-[#F36F00] text-white'
+                : 'text-slate-600 hover:bg-slate-100'
             }`}
           >
-            4. Phân công Ban (AI gợi ý)
+            4. Phân công 3 Ban (AI gợi ý)
           </button>
           <button
             type="button"
             onClick={() => setActiveTab('outbox')}
             className={`px-3.5 py-2 text-xs font-bold rounded-lg transition-colors whitespace-nowrap ${
               activeTab === 'outbox'
-                ? 'bg-[#435B61] text-white'
-                : 'text-[#435B61] hover:bg-[#F4F7F8]'
+                ? 'bg-[#F36F00] text-white'
+                : 'text-slate-600 hover:bg-slate-100'
             }`}
           >
-            5. Hộp thư đi (Outbox) & Mẫu thư
+            5. Mẫu thư và Ngưỡng
+          </button>
+        </div>
+
+        <div className="flex items-center gap-1.5 pr-1">
+          <button
+            type="button"
+            onClick={() => handleHrTimeTravel(1)}
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold text-[#1E293B] bg-slate-50 hover:border-[#F36F00] hover:text-[#F36F00] border border-slate-200 rounded-lg transition-colors whitespace-nowrap"
+          >
+            <FastForward className="w-3 h-3 text-[#F36F00]" />
+            Timer +1 ngày (Nhắc lịch)
+          </button>
+          <button
+            type="button"
+            onClick={() => handleHrTimeTravel(2)}
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold text-white bg-[#F36F00] hover:bg-[#D96200] rounded-lg transition-colors whitespace-nowrap"
+          >
+            <FastForward className="w-3 h-3" />
+            Timer +2 ngày (Quá hạn / Gạch tên)
           </button>
         </div>
       </div>
@@ -535,9 +653,9 @@ export function HrPortal({
                   <th className="py-2.5 px-3">Ứng viên</th>
                   <th className="py-2.5 px-3">MSSV · Lớp</th>
                   <th className="py-2.5 px-3">Nguyện vọng 1 / 2</th>
-                  <th className="py-2.5 px-3 text-right">Điểm sơ loại</th>
-                  <th className="py-2.5 px-3">Trạng thái luồng</th>
-                  <th className="py-2.5 px-3">Bộ đếm giờ / Hạn</th>
+                  <th className="py-2.5 px-3 text-right">Điểm hồ sơ</th>
+                  <th className="py-2.5 px-3">Trạng thái</th>
+                  <th className="py-2.5 px-3">Thời hạn</th>
                   <th className="py-2.5 px-3 text-right">Thao tác</th>
                 </tr>
               </thead>
@@ -625,7 +743,7 @@ export function HrPortal({
                             className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold text-[#146D85] bg-[#31B5D8]/12 hover:bg-[#31B5D8]/25 border border-[#31B5D8]/35 rounded-md transition-colors whitespace-nowrap"
                           >
                             <Eye className="w-3.5 h-3.5 text-[#31B5D8]" />
-                            Chi tiết & Log
+                            Chi tiết
                           </button>
                         </td>
                       </tr>
@@ -638,21 +756,18 @@ export function HrPortal({
         </div>
       )}
 
-      {/* TAB 2: HÀNG ĐỢI CẦN XEM XÉT (MANUAL REVIEW) */}
+      {/* TAB 2: DUYỆT HỒ SƠ */}
       {activeTab === 'needs_review' && (
         <div className="space-y-4">
           <div className="bg-white border border-slate-200 rounded-xl p-5">
             <h2 className="text-base font-bold text-slate-900">
-              Bước 5: Duyệt hồ sơ nhánh "Cần xem xét" ({round.threshold_y}đ ≤ Điểm &lt; {round.threshold_x}đ)
+              Duyệt hồ sơ còn lại ({needsReviewList.length})
             </h2>
-            <p className="text-xs text-slate-600 mt-1">
-              Phần câu hỏi tự luận không chấm tự động bằng máy mà được hiển thị nguyên vẹn bên dưới để Ban Nhân sự đọc, đánh giá và ra quyết định Đạt hoặc Không đạt kèm lý do.
-            </p>
           </div>
 
           {needsReviewList.length === 0 ? (
             <div className="bg-white border border-slate-200 rounded-xl p-8 text-center text-sm text-slate-500">
-              Tuyệt vời! Hiện không còn hồ sơ nào tồn đọng trong hàng đợi "Cần xem xét".
+              Hiện không có hồ sơ nào đang chờ duyệt.
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-4">
@@ -674,7 +789,7 @@ export function HrPortal({
                     </div>
                     <div className="text-right font-mono tabular-nums">
                       <span className="px-3 py-1 bg-orange-50 border border-orange-200 rounded-lg text-xs font-bold text-orange-800">
-                        Điểm sơ loại: {app.screening_score}đ (Giữa Y={round.threshold_y} và X={round.threshold_x})
+                        Điểm hồ sơ: {app.screening_score}đ
                       </span>
                     </div>
                   </div>
@@ -686,7 +801,7 @@ export function HrPortal({
                     </div>
                     <div className="bg-blue-50/50 border border-blue-200 rounded-lg p-3.5 space-y-1">
                       <div className="font-semibold text-blue-900">
-                        Bài tự luận của ứng viên (Dành cho HR đọc duyệt):
+                        Câu hỏi tự luận:
                       </div>
                       <p className="text-slate-900 leading-relaxed">{app.essay}</p>
                     </div>
@@ -729,7 +844,7 @@ export function HrPortal({
         </div>
       )}
 
-      {/* TAB 3: LOẠI RÕ GẦN NGƯỠNG — XEM LẠI TRƯỚC KHI GỬI */}
+      {/* TAB 3: XEM LẠI HỒ SƠ "LOẠI RÕ" SÁT NGƯỠNG & TRUY VẾT LOẠI TỰ ĐỘNG */}
       {activeTab === 'near_threshold' && (
         <div className="space-y-4">
           <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -737,11 +852,11 @@ export function HrPortal({
               <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
                 <AlertTriangle className="w-5 h-5 text-rose-600" />
                 <span>
-                  Hàng đợi "Loại rõ gần ngưỡng — HR xem lại trước khi gửi"
+                  Hồ sơ cần được xem xét ({nearThresholdList.length})
                 </span>
               </h2>
               <p className="text-xs text-slate-600 mt-1">
-                Các hồ sơ có điểm thấp hơn ngưỡng Y ({round.threshold_y}đ) nhưng nằm trong biên độ {round.near_threshold_margin} điểm ({round.threshold_y - round.near_threshold_margin}đ ≤ Điểm &lt; {round.threshold_y}đ) được giữ lại đây. Thông báo loại chỉ gửi sau khi HR bấm xác nhận.
+                Các hồ sơ có điểm sơ loại sát ngưỡng tối thiểu Y ({round.threshold_y - round.near_threshold_margin}đ ≤ Điểm &lt; {round.threshold_y}đ) được giữ lại để Ban Nhân sự xem xét trước khi chốt gửi thư không đạt.
               </p>
             </div>
             {nearThresholdList.length > 0 && (
@@ -751,14 +866,14 @@ export function HrPortal({
                 className="inline-flex items-center gap-2 px-4 py-2.5 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 rounded-lg transition-colors whitespace-nowrap shrink-0"
               >
                 <Send className="w-3.5 h-3.5" />
-                Xác nhận gửi thông báo loại tất cả ({nearThresholdList.length} hồ sơ)
+                Chốt & Gửi thông báo tất cả ({nearThresholdList.length} hồ sơ)
               </button>
             )}
           </div>
 
           {nearThresholdList.length === 0 ? (
             <div className="bg-white border border-slate-200 rounded-xl p-8 text-center text-sm text-slate-500">
-              Không có hồ sơ loại rõ gần ngưỡng nào đang chờ xác nhận gửi.
+              Hiện không có hồ sơ "Loại rõ" sát ngưỡng nào đang chờ xem lại.
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-4">
@@ -772,8 +887,7 @@ export function HrPortal({
                       </span>
                     </div>
                     <span className="px-3 py-1 bg-rose-50 border border-rose-200 rounded-lg text-xs font-mono font-bold text-rose-800 tabular-nums">
-                      Điểm sơ loại: {app.screening_score}đ (Cách ngưỡng Y={round.threshold_y}đ đúng{' '}
-                      {round.threshold_y - (app.screening_score || 0)}đ)
+                      Điểm sơ loại: {app.screening_score}đ (Sát ngưỡng Y={round.threshold_y}đ)
                     </span>
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
@@ -798,17 +912,46 @@ export function HrPortal({
                       className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 rounded-lg transition-colors"
                     >
                       <Send className="w-3.5 h-3.5" />
-                      Xác nhận Loại & Gửi thông báo
+                      Chốt Loại & Gửi thông báo không đạt
                     </button>
                   </div>
                 </div>
               ))}
             </div>
           )}
+
+          {rejectedDocsList.length > 0 && (
+            <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-3">
+              <h3 className="text-sm font-bold text-slate-900">
+                Danh sách Hồ sơ không đạt vòng đơn đã ghi nhật ký ({rejectedDocsList.length})
+              </h3>
+              <div className="divide-y divide-slate-200 text-xs">
+                {rejectedDocsList.map((app) => (
+                  <div key={app.id} className="py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                    <div>
+                      <span className="font-bold text-slate-900">{app.full_name}</span>
+                      <span className="font-mono text-slate-500 ml-2">
+                        ({app.student_id} · Điểm sơ loại: {app.screening_score ?? 0}đ)
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => openApplicationDetail(app.id)}
+                        className="px-2.5 py-1 text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-md"
+                      >
+                        Xem nhật ký điểm & lý do loại
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
-      {/* TAB 4: PHÂN CÔNG BAN (AI HỖ TRỢ - GEMINI API) */}
+      {/* TAB 4: PHÂN CÔNG BAN */}
       {activeTab === 'ai_assignment' && (
         <div className="space-y-6">
           <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-5">
@@ -816,11 +959,8 @@ export function HrPortal({
               <div className="space-y-1">
                 <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
                   <Sparkles className="w-5 h-5 text-blue-600" />
-                  <span>Bước 13–14: Phân công Vị trí / Ban (Có Gemini AI hỗ trợ gợi ý)</span>
+                  <span>Phân công Ban cho Cộng tác viên mới</span>
                 </h2>
-                <p className="text-xs text-slate-600">
-                  AI phân tích điểm phỏng vấn, nguyện vọng 1–2, kinh nghiệm và chỉ tiêu còn lại của từng ban để gợi ý. Gợi ý của AI không có hiệu lực cho đến khi HR kiểm tra, chỉnh sửa (nếu cần) và bấm "Chốt phân công và gửi".
-                </p>
               </div>
               <div className="flex flex-wrap items-center gap-2.5 shrink-0">
                 <button
@@ -830,7 +970,7 @@ export function HrPortal({
                   className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg transition-colors whitespace-nowrap"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${aiLoading ? 'animate-spin' : ''}`} />
-                  {aiLoading ? 'Đang gọi Gemini AI...' : 'Chạy lại gợi ý AI (Gemini)'}
+                  {aiLoading ? 'Đang cập nhật gợi ý...' : 'Cập nhật gợi ý phân ban'}
                 </button>
                 <button
                   type="button"
@@ -844,45 +984,47 @@ export function HrPortal({
               </div>
             </div>
 
-            {/* Department Quota Cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {/* 3 Department Quota Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {deptQuotas.map((d) => {
+                const completedForDept = completedAssigned.filter(
+                  (c) => (c.assignment?.department_id || c.first_choice_dept_id) === d.id
+                ).length;
+                const actualAssignedCount = Math.max(d.assignedCount ?? 0, completedForDept);
+                const actualRemainingQuota = Math.max(0, d.quota - actualAssignedCount);
                 const pendingForDept = aiCandidates.filter(
                   (c) => (c.assignment?.department_id || c.first_choice_dept_id) === d.id
                 ).length;
-                const willExceed = pendingForDept > d.remainingQuota;
+                const willExceed = pendingForDept > actualRemainingQuota;
                 return (
                   <div
                     key={d.id}
-                    className={`p-3.5 rounded-lg border ${
-                      willExceed ? 'bg-red-50 border-red-300' : 'bg-slate-50 border-slate-200'
+                    className={`p-4 rounded-xl border ${
+                      willExceed ? 'bg-red-50 border-red-300' : 'bg-[#F8FAFC] border-slate-200'
                     }`}
                   >
-                    <div className="font-semibold text-xs text-slate-900">{d.name}</div>
-                    <div className="flex items-center justify-between mt-1.5 text-xs font-mono tabular-nums">
+                    <div className="font-bold text-sm text-[#1E293B]">{d.name}</div>
+                    <div className="flex items-center justify-between mt-1.5 text-xs tabular-nums">
                       <span className="text-slate-600">
-                        Đã chốt: {d.assignedCount}/{d.quota}
+                        Đã chốt:{' '}
+                        <strong className={actualAssignedCount > 0 ? 'text-emerald-700' : 'text-slate-800'}>
+                          {actualAssignedCount}/{d.quota}
+                        </strong>
                       </span>
-                      <span className="font-bold text-blue-700">Còn lại: {d.remainingQuota}</span>
+                      <span className="font-bold text-[#F36F00]">Còn nhận: {actualRemainingQuota}</span>
                     </div>
-                    <div className="text-[11px] mt-1 font-medium text-slate-600">
-                      Đang dự kiến phân vào: <strong>{pendingForDept}</strong> ứng viên
+                    <div className="text-xs mt-1 text-slate-600">
+                      Đang chờ duyệt vào ban: <strong>{pendingForDept}</strong> bạn
                     </div>
                   </div>
                 );
               })}
             </div>
 
-            {aiMessage && (
-              <div className="text-xs text-blue-900 bg-blue-50/80 border border-blue-200 rounded-lg px-4 py-2.5">
-                <strong>Trạng thái AI:</strong> {aiMessage}
-              </div>
-            )}
-
             {/* Pending Candidates Table */}
             {aiCandidates.length === 0 ? (
               <div className="p-8 text-center text-sm text-slate-500 border border-dashed border-slate-200 rounded-lg">
-                Hiện không có ứng viên nào ở trạng thái "Đã xác nhận vào nhóm — Chờ phân ban". (Các ứng viên đậu sau khi bấm Xác nhận tham gia nhóm sẽ xuất hiện tại đây).
+                Hiện không có ứng viên nào đang chờ phân ban.
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -898,8 +1040,14 @@ export function HrPortal({
                   </thead>
                   <tbody className="divide-y divide-slate-200 text-xs">
                     {aiCandidates.map((cand) => {
+                      const availableFirstChoice = deptQuotas.find(
+                        (d) => d.id === cand.first_choice_dept_id && d.remainingQuota > 0
+                      )?.id;
+                      const fallbackAvailable = deptQuotas.find((d) => d.remainingQuota > 0)?.id || '';
                       const currentDeptId =
-                        cand.assignment?.department_id || cand.first_choice_dept_id;
+                        cand.assignment?.department_id || availableFirstChoice || fallbackAvailable;
+                      const displayScore =
+                        cand.selection_decision?.total_score ?? cand.screening_score ?? 0;
                       return (
                         <tr key={cand.id} className="hover:bg-slate-50">
                           <td className="py-3 px-3">
@@ -909,7 +1057,7 @@ export function HrPortal({
                             </div>
                           </td>
                           <td className="py-3 px-3 text-right font-mono font-bold text-blue-700 tabular-nums">
-                            {cand.selection_decision?.total_score ?? cand.screening_score}đ
+                            {displayScore}đ
                           </td>
                           <td className="py-3 px-3">
                             <div className="font-medium text-slate-900">NV1: {cand.first_choice_name}</div>
@@ -919,19 +1067,31 @@ export function HrPortal({
                           </td>
                           <td className="py-3 px-3 max-w-md">
                             <div className="font-semibold text-blue-800">
-                              Gợi ý: {cand.assignment?.ai_suggested_dept_name || cand.first_choice_name}
+                              Gợi ý:{' '}
+                              {cand.assignment?.ai_suggested_dept_name ||
+                                (currentDeptId ? cand.first_choice_name : 'Chưa thể gợi ý (Hết chỉ tiêu)')}
                             </div>
                             <p className="text-slate-600 text-[11px] mt-0.5 leading-relaxed">
-                              {cand.assignment?.ai_reason || 'Khớp nguyện vọng 1 và điểm phỏng vấn cao.'}
+                              {cand.assignment?.ai_reason ||
+                                (currentDeptId
+                                  ? 'Khớp nguyện vọng 1 và điểm phỏng vấn.'
+                                  : 'Tất cả các ban đã hết chỉ tiêu nhận CTV.')}
                             </p>
                           </td>
                           <td className="py-3 px-3">
                             <select
                               value={currentDeptId}
-                              onChange={(e) => handleChangeCandidateDepartment(cand.id, e.target.value)}
+                              onChange={(e) => {
+                                if (e.target.value) {
+                                  handleChangeCandidateDepartment(cand.id, e.target.value);
+                                }
+                              }}
                               aria-label={`Chọn ban phân công cho ${cand.full_name}`}
                               className="px-3 py-1.5 text-xs font-semibold bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600"
                             >
+                              {!currentDeptId && (
+                                <option value="">-- Hết chỉ tiêu (Cần tăng quota) --</option>
+                              )}
                               {deptQuotas.map((d) => (
                                 <option key={d.id} value={d.id}>
                                   {d.name} (Còn {d.remainingQuota} chỗ)
@@ -979,14 +1139,19 @@ export function HrPortal({
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           <div className="lg:col-span-7 bg-white border border-slate-200 rounded-xl p-6 space-y-4">
             <div className="flex items-center justify-between">
-              <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                <Mail className="w-5 h-5 text-blue-600" />
-                <span>Hộp thư đi (Outbox — {outboxList.length} thư đã gửi)</span>
-              </h2>
+              <div>
+                <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                  <Mail className="w-5 h-5 text-blue-600" />
+                  <span>Hộp thư đi mô phỏng (Outbox — {outboxList.length} thông báo đã ghi nhận)</span>
+                </h2>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Chế độ mô phỏng nội bộ: Thông báo được lưu vào bảng Outbox trong SQLite và hiển thị trực tiếp trên cổng Ứng viên (không gửi email SMTP ra ngoài).
+                </p>
+              </div>
               <button
                 type="button"
                 onClick={loadOutbox}
-                className="text-xs font-semibold text-blue-600 hover:underline"
+                className="text-xs font-semibold text-blue-600 hover:underline shrink-0"
               >
                 Làm mới
               </button>
@@ -1013,80 +1178,127 @@ export function HrPortal({
             </div>
           </div>
 
-          <div className="lg:col-span-5 bg-white border border-slate-200 rounded-xl p-6 space-y-4">
-            <h2 className="text-base font-bold text-slate-900">
-              Cấu hình 10 Mẫu thư Tự động
-            </h2>
-            <p className="text-xs text-slate-600">
-              Hỗ trợ các biến tự động: <code className="font-mono text-blue-700">{'{{full_name}}'}</code>,{' '}
-              <code className="font-mono text-blue-700">{'{{link}}'}</code>,{' '}
-              <code className="font-mono text-blue-700">{'{{deadline}}'}</code>,{' '}
-              <code className="font-mono text-blue-700">{'{{department}}'}</code>
-            </p>
-
-            <div>
-              <label htmlFor="tpl-select" className="block text-xs font-semibold text-slate-700 mb-1">
-                Chọn mẫu thư:
-              </label>
-              <select
-                id="tpl-select"
-                value={selectedTplKey}
-                onChange={(e) => setSelectedTplKey(e.target.value)}
-                className="w-full px-3 py-2 text-xs font-semibold border border-slate-300 rounded-lg bg-white"
-              >
-                {Object.values(templates).map((t) => (
-                  <option key={t.key} value={t.key}>
-                    {t.name} ({t.key})
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {templates[selectedTplKey] && (
-              <div className="space-y-3">
+          <div className="lg:col-span-5 bg-white border border-slate-200 rounded-xl p-6 space-y-5">
+            {/* Editable Thresholds X, Y right alongside Templates */}
+            <div className="p-4 rounded-xl bg-[#F8FAFC] border border-slate-200 space-y-3">
+              <div className="text-sm font-bold text-[#1E293B]">
+                Chỉnh sửa Ngưỡng sơ loại X, Y (Không cần vẽ lại quy trình)
+              </div>
+              <div className="grid grid-cols-3 gap-2.5 text-xs">
                 <div>
-                  <label htmlFor="tpl-subject" className="block text-xs font-semibold text-slate-700 mb-1">
-                    Tiêu đề thư (Subject):
+                  <label htmlFor="hr-cfg-x" className="block font-semibold text-slate-700 mb-1">
+                    Ngưỡng Đạt rõ X:
                   </label>
                   <input
-                    id="tpl-subject"
-                    type="text"
-                    value={templates[selectedTplKey].subject}
-                    onChange={(e) =>
-                      setTemplates({
-                        ...templates,
-                        [selectedTplKey]: { ...templates[selectedTplKey], subject: e.target.value },
-                      })
-                    }
-                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg"
+                    id="hr-cfg-x"
+                    type="number"
+                    value={thresholdXInput}
+                    onChange={(e) => setThresholdXInput(Number(e.target.value))}
+                    className="w-full px-2.5 py-1.5 font-mono font-bold border border-slate-300 rounded-lg bg-white"
                   />
                 </div>
                 <div>
-                  <label htmlFor="tpl-body" className="block text-xs font-semibold text-slate-700 mb-1">
-                    Nội dung thư (Body):
+                  <label htmlFor="hr-cfg-y" className="block font-semibold text-slate-700 mb-1">
+                    Ngưỡng Loại rõ Y:
                   </label>
-                  <textarea
-                    id="tpl-body"
-                    rows={8}
-                    value={templates[selectedTplKey].body}
-                    onChange={(e) =>
-                      setTemplates({
-                        ...templates,
-                        [selectedTplKey]: { ...templates[selectedTplKey], body: e.target.value },
-                      })
-                    }
-                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg font-mono"
+                  <input
+                    id="hr-cfg-y"
+                    type="number"
+                    value={thresholdYInput}
+                    onChange={(e) => setThresholdYInput(Number(e.target.value))}
+                    className="w-full px-2.5 py-1.5 font-mono font-bold border border-slate-300 rounded-lg bg-white"
                   />
                 </div>
-                <button
-                  type="button"
-                  onClick={handleSaveTemplate}
-                  className="w-full py-2.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
-                >
-                  Lưu thay đổi mẫu thư
-                </button>
+                <div>
+                  <label htmlFor="hr-cfg-margin" className="block font-semibold text-slate-700 mb-1">
+                    Biên độ sát Y:
+                  </label>
+                  <input
+                    id="hr-cfg-margin"
+                    type="number"
+                    value={nearMarginInput}
+                    onChange={(e) => setNearMarginInput(Number(e.target.value))}
+                    className="w-full px-2.5 py-1.5 font-mono font-bold border border-slate-300 rounded-lg bg-white"
+                  />
+                </div>
               </div>
-            )}
+            </div>
+
+            <div className="space-y-3">
+              <h2 className="text-base font-bold text-slate-900">
+                Cấu hình 10 Mẫu thư Tự động
+              </h2>
+              <p className="text-xs text-slate-600">
+                Hỗ trợ các biến tự động: <code className="font-mono text-blue-700">{'{{full_name}}'}</code>,{' '}
+                <code className="font-mono text-blue-700">{'{{link}}'}</code>,{' '}
+                <code className="font-mono text-blue-700">{'{{deadline}}'}</code>,{' '}
+                <code className="font-mono text-blue-700">{'{{department}}'}</code>
+              </p>
+
+              <div>
+                <label htmlFor="tpl-select" className="block text-xs font-semibold text-slate-700 mb-1">
+                  Chọn mẫu thư:
+                </label>
+                <select
+                  id="tpl-select"
+                  value={selectedTplKey}
+                  onChange={(e) => setSelectedTplKey(e.target.value)}
+                  className="w-full px-3 py-2 text-xs font-semibold border border-slate-300 rounded-lg bg-white"
+                >
+                  {Object.values(templates).map((t) => (
+                    <option key={t.key} value={t.key}>
+                      {t.name} ({t.key})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {templates[selectedTplKey] && (
+                <div className="space-y-3">
+                  <div>
+                    <label htmlFor="tpl-subject" className="block text-xs font-semibold text-slate-700 mb-1">
+                      Tiêu đề thư (Subject):
+                    </label>
+                    <input
+                      id="tpl-subject"
+                      type="text"
+                      value={templates[selectedTplKey].subject}
+                      onChange={(e) =>
+                        setTemplates({
+                          ...templates,
+                          [selectedTplKey]: { ...templates[selectedTplKey], subject: e.target.value },
+                        })
+                      }
+                      className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="tpl-body" className="block text-xs font-semibold text-slate-700 mb-1">
+                      Nội dung thư (Body):
+                    </label>
+                    <textarea
+                      id="tpl-body"
+                      rows={7}
+                      value={templates[selectedTplKey].body}
+                      onChange={(e) =>
+                        setTemplates({
+                          ...templates,
+                          [selectedTplKey]: { ...templates[selectedTplKey], body: e.target.value },
+                        })
+                      }
+                      className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg font-mono"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleSaveTemplateAndThresholds}
+                    className="w-full py-2.5 text-xs font-bold text-white bg-[#F36F00] hover:bg-[#D96200] rounded-lg transition-colors"
+                  >
+                    Lưu Mẫu thư & Ngưỡng X, Y
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -1131,9 +1343,9 @@ export function HrPortal({
                   </div>
                 </div>
                 <div>
-                  <div className="text-slate-500">Điểm sơ loại</div>
+                  <div className="text-slate-500">Điểm hồ sơ</div>
                   <div className="font-mono font-bold text-blue-700 mt-0.5">
-                    {detailApp.screening_score !== null ? `${detailApp.screening_score}đ (${detailApp.screening_result})` : 'Chưa chấm'}
+                    {detailApp.screening_score !== null ? `${detailApp.screening_score}đ` : 'Chưa chấm'}
                   </div>
                 </div>
                 <div>
@@ -1157,23 +1369,15 @@ export function HrPortal({
 
               <div>
                 <h4 className="font-bold text-slate-900 mb-2">
-                  Lịch sử Audit Log của Case ({detailLogs.length} sự kiện)
+                  Lịch sử xử lý hồ sơ ({detailLogs.length})
                 </h4>
                 <div className="space-y-2 max-h-60 overflow-y-auto">
                   {detailLogs.map((log) => (
-                    <div key={log.id} className="p-3 rounded-lg bg-slate-50 border border-slate-200 space-y-1">
-                      <div className="flex items-center justify-between">
-                        <span className="font-mono font-semibold text-blue-700">
-                          {log.action} · Tác nhân: {log.actor}
-                        </span>
-                        <span className="font-mono text-[11px] text-slate-500 tabular-nums">
-                          {new Date(log.created_at).toLocaleString('vi-VN')}
-                        </span>
-                      </div>
+                    <div key={log.id} className="p-3 rounded-lg bg-slate-50 border border-slate-200 flex items-start justify-between gap-3">
                       <div className="text-slate-900 font-medium">{log.result}</div>
-                      <div className="text-[11px] font-mono text-slate-500">
-                        Luật áp dụng: {log.rule_applied}
-                      </div>
+                      <span className="font-mono text-[11px] text-slate-500 tabular-nums shrink-0">
+                        {new Date(log.created_at).toLocaleString('vi-VN')}
+                      </span>
                     </div>
                   ))}
                 </div>

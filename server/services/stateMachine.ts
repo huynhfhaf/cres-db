@@ -1,7 +1,7 @@
 import crypto from 'crypto';
-import { db, getSystemNowIso, getSetting } from '../db/database';
-import type { Application, ApplicationStatus, EndReason, RecruitmentRound } from '../../src/types';
-import { END_STATUSES } from '../../src/types';
+import { db, getSystemNowIso, getSetting } from '../db/database.ts';
+import type { Application, ApplicationStatus, EndReason, RecruitmentRound } from '../../src/types.ts';
+import { END_STATUSES } from '../../src/types.ts';
 import {
   isValidStateTransition,
   checkRequiredFields,
@@ -11,8 +11,8 @@ import {
   REQUIRED_FIELD_LABELS,
   canConvergeInterviewAndJoin,
   computeTotalScore,
-} from '../rules/rulesEngine';
-import { NotificationService } from './notificationService';
+} from '../rules/rulesEngine.ts';
+import { NotificationService } from './notificationService.ts';
 
 export interface TransitionOptions {
   applicationId: string;
@@ -489,13 +489,20 @@ export function withdrawApplication(
   if (!app) {
     throw new Error('Không tìm thấy hồ sơ ứng tuyển.');
   }
-  if (END_STATUSES.includes(app.status)) {
-    throw new Error('Hồ sơ đã ở trạng thái kết thúc, không thể rút đơn.');
+  const nonWithdrawableStatuses: ApplicationStatus[] = [
+    'withdrawn',
+    'expired_supplement',
+    'rejected_docs',
+    'no_booking',
+    'failed_interview',
+  ];
+  if (nonWithdrawableStatuses.includes(app.status)) {
+    throw new Error('Hồ sơ đã dừng hoặc đã rút đơn trước đó.');
   }
 
   const nowIso = getSystemNowIso();
 
-  // Check if candidate had an assignment
+  // Check if candidate had an assignment -> automatically revoke and restore quota
   const existingAssignment = db
     .prepare('SELECT * FROM assignments WHERE application_id = ? AND status != ?')
     .get(applicationId, 'revoked') as { id: string; department_id: string; status: string } | undefined;

@@ -72,9 +72,9 @@ export function CandidatePortal({
     first_choice_dept_id: departments[0]?.id || '',
     second_choice_dept_id: departments[1]?.id || '',
     experience:
-      'Từng tham gia điều phối sự kiện Chào tân sinh viên Khoa Kinh doanh Quốc tế DUE và thiết kế ấn phẩm truyền thông trên Canva, Photoshop.',
+      'Từng tham gia điều phối sự kiện Chào tân sinh viên tại Đại học Kinh tế - Đại học Đà Nẵng và thiết kế ấn phẩm truyền thông trên Canva, Photoshop.',
     essay:
-      'Em mong muốn gia nhập CLB C-res để rèn luyện kỹ năng tổ chức sự kiện học thuật quy mô lớn tại Trường Đại học Kinh tế – ĐHĐN và đóng góp sức trẻ cho cộng đồng sinh viên.',
+      'Em mong muốn gia nhập Câu lạc bộ Thương mại C-RES để học hỏi thực tế về thương mại, sự kiện và đóng góp sức trẻ cho cộng đồng sinh viên Đại học Kinh tế - Đại học Đà Nẵng.',
     cv_url: 'https://behance.net/ungvien-due',
     commitment_confirmed: true,
     is_active_student: true,
@@ -137,39 +137,29 @@ export function CandidatePortal({
 
   const handleSaveDraft = () => {
     localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(formData));
-    setFeedback({ type: 'success', text: 'Đã lưu nháp đơn đăng ký trên trình duyệt.' });
+    setFeedback({ type: 'success', text: 'Đã lưu tạm thông tin đơn đăng ký của bạn trên trình duyệt.' });
   };
 
-  const handleSubmitApplication = async (e: React.FormEvent, forceIncompleteDemo = false) => {
+  const handleSubmitApplication = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitting(true);
     setFeedback(null);
     try {
-      const payload = forceIncompleteDemo
-        ? {
-            ...formData,
-            phone: '',
-            essay: '',
-          }
-        : formData;
-
       await apiRequest('/applications', {
         method: 'POST',
-        body: JSON.stringify(payload),
+        body: JSON.stringify(formData),
       });
       localStorage.removeItem(DRAFT_STORAGE_KEY);
       setFeedback({
         type: 'success',
-        text: forceIncompleteDemo
-          ? 'Đã nộp hồ sơ thiếu SĐT & Tự luận — Hệ thống đã tự động chuyển sang Subprocess "Bổ sung hồ sơ" kèm Timer 2 ngày!'
-          : 'Đã nộp hồ sơ thành công! Hệ thống đã tự động kiểm tra và sơ loại hồ sơ của bạn.',
+        text: 'Cảm ơn bạn! Đơn đăng ký ứng tuyển vào Câu lạc bộ Thương mại C-RES đã được gửi thành công.',
       });
       await loadMyData();
       onRefreshGlobal();
     } catch (err) {
       setFeedback({
         type: 'error',
-        text: err instanceof Error ? err.message : 'Lỗi khi nộp đơn đăng ký',
+        text: err instanceof Error ? err.message : 'Chưa thể gửi đơn đăng ký, bạn vui lòng kiểm tra lại nhé',
       });
     } finally {
       setSubmitting(false);
@@ -188,14 +178,14 @@ export function CandidatePortal({
       });
       setFeedback({
         type: 'success',
-        text: 'Đã gửi thông tin bổ sung! Hệ thống đã tự động kiểm tra lại và cập nhật trạng thái hồ sơ.',
+        text: 'Cảm ơn bạn đã cập nhật bổ sung thông tin hồ sơ! Ban Nhân sự sẽ sớm phản hồi kết quả đến bạn.',
       });
       await loadMyData();
       onRefreshGlobal();
     } catch (err) {
       setFeedback({
         type: 'error',
-        text: err instanceof Error ? err.message : 'Lỗi khi gửi bổ sung hồ sơ',
+        text: err instanceof Error ? err.message : 'Chưa thể gửi thông tin bổ sung, bạn vui lòng thử lại nhé',
       });
     } finally {
       setSubmitting(false);
@@ -213,14 +203,14 @@ export function CandidatePortal({
       });
       setFeedback({
         type: 'success',
-        text: 'Đã đặt khung giờ phỏng vấn thành công! Các bộ đếm nhắc lịch/hủy lịch đã tự động dừng.',
+        text: 'Bạn đã chọn lịch phỏng vấn thành công! Hẹn gặp bạn tại buổi phỏng vấn của Câu lạc bộ Thương mại C-RES nhé.',
       });
       await loadMyData();
       onRefreshGlobal();
     } catch (err) {
       setFeedback({
         type: 'error',
-        text: err instanceof Error ? err.message : 'Không thể đặt khung giờ này',
+        text: err instanceof Error ? err.message : 'Khung giờ này hiện không thể chọn, bạn vui lòng chọn khung giờ khác nhé',
       });
     } finally {
       setSubmitting(false);
@@ -237,14 +227,14 @@ export function CandidatePortal({
       });
       setFeedback({
         type: 'success',
-        text: 'Check-in buổi phỏng vấn thành công! Nhánh ứng viên của cổng song song (AND) đã hoàn tất.',
+        text: 'Điểm danh thành công! Chúc bạn có một buổi trò chuyện thật tự tin và thoải mái cùng C-RES nhé.',
       });
       await loadMyData();
       onRefreshGlobal();
     } catch (err) {
       setFeedback({
         type: 'error',
-        text: err instanceof Error ? err.message : 'Lỗi khi check-in phỏng vấn',
+        text: err instanceof Error ? err.message : 'Chưa thể điểm danh lúc này, bạn vui lòng báo với Ban Nhân sự tại bàn đón tiếp nhé',
       });
     } finally {
       setSubmitting(false);
@@ -262,14 +252,14 @@ export function CandidatePortal({
       });
       setFeedback({
         type: 'success',
-        text: 'Đã xác nhận tham gia CLB thành công! Bạn đã được mở khóa link nhóm sinh hoạt và chuyển sang bước Phân ban.',
+        text: 'Chào mừng bạn chính thức trở thành thành viên mới của đại gia đình Câu lạc bộ Thương mại C-RES!',
       });
       await loadMyData();
       onRefreshGlobal();
     } catch (err) {
       setFeedback({
         type: 'error',
-        text: err instanceof Error ? err.message : 'Lỗi khi xác nhận tham gia',
+        text: err instanceof Error ? err.message : 'Chưa thể xác nhận tham gia, bạn vui lòng thử lại nhé',
       });
     } finally {
       setSubmitting(false);
@@ -289,14 +279,14 @@ export function CandidatePortal({
       setShowWithdrawModal(false);
       setFeedback({
         type: 'success',
-        text: 'Đã ghi nhận rút đơn ứng tuyển, hủy toàn bộ timer và hoàn trả chỉ tiêu ban (nếu có).',
+        text: 'Câu lạc bộ Thương mại C-RES đã ghi nhận yêu cầu rút hồ sơ của bạn. Hẹn gặp lại bạn ở các chương trình sắp tới nhé!',
       });
       await loadMyData();
       onRefreshGlobal();
     } catch (err) {
       setFeedback({
         type: 'error',
-        text: err instanceof Error ? err.message : 'Lỗi khi rút đơn',
+        text: err instanceof Error ? err.message : 'Chưa thể rút đơn lúc này',
       });
     } finally {
       setSubmitting(false);
@@ -314,12 +304,12 @@ export function CandidatePortal({
 
   // Timeline Steps Calculation for Existing Application
   const timelineSteps = [
-    { key: 'step1', label: '1. Nộp & Kiểm tra hồ sơ' },
-    { key: 'step2', label: '2. Sơ loại & Duyệt hồ sơ' },
+    { key: 'step1', label: '1. Nộp hồ sơ' },
+    { key: 'step2', label: '2. Xét duyệt hồ sơ' },
     { key: 'step3', label: '3. Đặt lịch phỏng vấn' },
-    { key: 'step4', label: '4. Phỏng vấn & Chấm điểm (Song song)' },
-    { key: 'step5', label: '5. Kết quả & Xác nhận vào nhóm' },
-    { key: 'step6', label: '6. Phân công Ban & Hoàn tất' },
+    { key: 'step4', label: '4. Tham gia phỏng vấn' },
+    { key: 'step5', label: '5. Kết quả & Xác nhận' },
+    { key: 'step6', label: '6. Phân công Ban' },
   ];
 
   const getActiveStepIndex = (status: Application['status']) => {
@@ -336,68 +326,62 @@ export function CandidatePortal({
   };
 
   const activeStepIdx = app ? getActiveStepIndex(app.status) : 0;
-  const isTerminated = app ? END_STATUSES.includes(app.status) : false;
-
-  const deptAccentBorders = [
-    'border-t-4 border-t-[#F36F00]',
-    'border-t-4 border-t-[#68A225]',
-    'border-t-4 border-t-[#31B5D8]',
-    'border-t-4 border-t-[#FDD000]',
+  const nonWithdrawableStatuses: Application['status'][] = [
+    'withdrawn',
+    'expired_supplement',
+    'rejected_docs',
+    'no_booking',
+    'failed_interview',
   ];
+  const canWithdraw = app ? !nonWithdrawableStatuses.includes(app.status) : false;
 
   return (
     <div className="space-y-6">
-      {/* Round Banner with Official C-res Logo */}
-      <div className="bg-white border border-[#435B61]/20 rounded-xl p-6 shadow-2xs">
+      {/* Round Banner with Official C-RES Logo & Facebook Fanpage Link */}
+      <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-2xs">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
           <div className="flex items-start sm:items-center gap-4">
             <img
               src="/assets/aistudio/C-RES_C__VI_N__1__e8c78418.png"
-              alt="Logo CLB C-res"
+              alt="Logo Câu lạc bộ Thương mại C-RES"
               className="h-14 w-auto object-contain shrink-0"
             />
             <div className="space-y-1">
-              <div className="flex items-center gap-2 text-xs font-bold text-[#F36F00]">
-                <span>CLB C-RES · TRƯỜNG ĐẠI HỌC KINH TẾ – ĐẠI HỌC ĐÀ NẴNG</span>
+              <div className="flex flex-wrap items-center gap-2 text-xs font-bold text-[#F36F00]">
+                <span>CÂU LẠC BỘ THƯƠNG MẠI C-RES · ĐẠI HỌC KINH TẾ - ĐẠI HỌC ĐÀ NẴNG</span>
                 <span>·</span>
-                <span className="text-[#53821D]">ĐỢT TUYỂN ĐANG MỞ</span>
+                <span className="text-emerald-700">ĐANG MỞ ĐƠN ỨNG TUYỂN</span>
               </div>
-              <h1 className="text-xl sm:text-2xl font-bold text-[#26383C]">{round.name}</h1>
-              <p className="text-sm text-[#435B61]">{round.event_name}</p>
+              <h1 className="text-xl sm:text-2xl font-bold text-[#1E293B]">{round.name}</h1>
+              <p className="text-sm text-slate-600">{round.event_name}</p>
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-3 text-xs text-[#435B61] tabular-nums">
-            <div className="bg-white border border-[#31B5D8]/40 rounded-lg px-3.5 py-2">
-              <div className="text-[#435B61]">Ngưỡng Đạt rõ / Loại rõ</div>
-              <div className="font-bold text-[#146D85]">
-                X = {round.threshold_x}đ · Y = {round.threshold_y}đ
-              </div>
-            </div>
-            <div className="bg-white border border-[#F36F00]/40 rounded-lg px-3.5 py-2">
-              <div className="text-[#435B61]">Hạn bổ sung / Đặt lịch</div>
-              <div className="font-bold text-[#C45800]">
-                {round.supplement_deadline_days} ngày (tối đa {round.supplement_max_rounds} lần) · Nhắc {round.remind_after_days}d / Hủy {round.unbook_after_days}d
-              </div>
-            </div>
-          </div>
+
+          <a
+            href="https://www.facebook.com/CRESclub.2710?locale=vi_VN"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-50 hover:bg-orange-50/50 border border-slate-200 hover:border-[#F36F00] text-xs font-semibold text-[#1E293B] hover:text-[#F36F00] transition-colors w-fit shrink-0"
+          >
+            <span>Fanpage Facebook C-RES</span>
+            <ExternalLink className="w-3.5 h-3.5 text-[#F36F00]" />
+          </a>
         </div>
 
-        {/* 4 Departments Overview with 4 C-res Logo Colors */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-5 pt-5 border-t border-[#435B61]/15">
-          {departments.map((d, idx) => (
+        {/* 3 Departments Overview with Clean Neutral Cards + C-RES Orange Accent */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-5 pt-5 border-t border-slate-200">
+          {departments.map((d) => (
             <div
               key={d.id}
-              className={`bg-white border border-[#435B61]/20 ${
-                deptAccentBorders[idx % deptAccentBorders.length]
-              } rounded-lg p-3.5`}
+              className="bg-[#F8FAFC] border border-slate-200 rounded-xl p-4 space-y-1.5"
             >
-              <div className="flex items-center justify-between mb-1">
-                <span className="font-bold text-sm text-[#26383C]">{d.name}</span>
-                <span className="text-xs font-mono font-bold text-[#F36F00] tabular-nums">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-bold text-sm text-[#1E293B]">{d.name}</span>
+                <span className="text-xs font-bold px-2.5 py-0.5 rounded-md bg-orange-50 text-[#F36F00] border border-orange-200 tabular-nums">
                   Chỉ tiêu: {d.remaining_quota ?? d.quota}/{d.quota}
                 </span>
               </div>
-              <p className="text-xs text-[#435B61] line-clamp-2">{d.description}</p>
+              <p className="text-xs text-slate-600 leading-relaxed">{d.description}</p>
             </div>
           ))}
         </div>
@@ -425,13 +409,13 @@ export function CandidatePortal({
       {/* CASE A: Candidate has NOT submitted an application yet -> Registration Form */}
       {!app ? (
         <div className="bg-white border border-slate-200 rounded-xl p-6">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pb-5 mb-6 border-b border-slate-200">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pb-4 mb-4 border-b border-slate-200">
             <div>
-              <h2 className="text-lg font-bold text-slate-900">
-                Bước 1: Điền Form Đăng Ký Ứng Tuyển CTV C-res
+              <h2 className="text-lg font-bold text-[#1E293B]">
+                Đơn Đăng Ký Ứng Tuyển Cộng Tác Viên Câu lạc bộ Thương mại C-RES
               </h2>
               <p className="text-xs text-slate-600 mt-0.5">
-                Sau khi nộp, hệ thống tự động kiểm tra trường bắt buộc trên Sheet và sơ loại theo ngưỡng X/Y ngay lập tức.
+                Bạn vui lòng điền thông tin cá nhân và chọn ban nguyện vọng bên dưới (dữ liệu tự động lưu vào Sheet hồ sơ).
               </p>
             </div>
             <button
@@ -444,7 +428,7 @@ export function CandidatePortal({
             </button>
           </div>
 
-          <form onSubmit={(e) => handleSubmitApplication(e, false)} className="space-y-5">
+          <form onSubmit={handleSubmitApplication} className="space-y-5">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
                 <label htmlFor="cand-fullname" className="block text-xs font-semibold text-slate-700 mb-1.5">
@@ -516,7 +500,7 @@ export function CandidatePortal({
               </div>
               <div>
                 <label htmlFor="cand-cv" className="block text-xs font-semibold text-slate-700 mb-1.5">
-                  Link CV / Portfolio (Tùy chọn — cộng điểm sơ loại)
+                  Link CV / Portfolio (Tùy chọn)
                 </label>
                 <input
                   id="cand-cv"
@@ -570,29 +554,29 @@ export function CandidatePortal({
 
             <div>
               <label htmlFor="cand-exp" className="block text-xs font-semibold text-slate-700 mb-1.5">
-                Kinh nghiệm hoạt động ngoại khóa / chuyên môn <span className="text-red-600">*</span>
+                Kinh nghiệm hoạt động ngoại khóa / kỹ năng cá nhân <span className="text-red-600">*</span>
               </label>
               <textarea
                 id="cand-exp"
                 rows={3}
                 value={formData.experience}
                 onChange={(e) => setFormData({ ...formData, experience: e.target.value })}
-                className="w-full px-3.5 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600"
-                placeholder="Mô tả các hoạt động CLB, sự kiện, kỹ năng thiết kế, viết bài, hậu cần hoặc đối ngoại..."
+                className="w-full px-3.5 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#F36F00]"
+                placeholder="Chia sẻ các hoạt động CLB, sự kiện hoặc kỹ năng truyền thông, nhân sự, kinh doanh của bạn..."
               />
             </div>
 
             <div>
               <label htmlFor="cand-essay" className="block text-xs font-semibold text-slate-700 mb-1.5">
-                Câu hỏi tự luận: Vì sao bạn chọn CLB C-res và định hướng đóng góp của bạn? <span className="text-red-600">*</span>
+                Câu hỏi tự luận: Vì sao bạn chọn Câu lạc bộ Thương mại C-RES và mong muốn đóng góp điều gì? <span className="text-red-600">*</span>
               </label>
               <textarea
                 id="cand-essay"
                 rows={3}
                 value={formData.essay}
                 onChange={(e) => setFormData({ ...formData, essay: e.target.value })}
-                className="w-full px-3.5 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600"
-                placeholder="Chia sẻ góc nhìn và mong muốn của bạn (Phần tự luận sẽ được Ban Nhân sự trực tiếp xem xét ở nhánh Cần xem xét)..."
+                className="w-full px-3.5 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#F36F00]"
+                placeholder="Chia sẻ góc nhìn, mục tiêu và mong muốn của bạn khi đồng hành cùng Câu lạc bộ Thương mại C-RES..."
               />
             </div>
 
@@ -602,37 +586,29 @@ export function CandidatePortal({
                   type="checkbox"
                   checked={formData.is_active_student}
                   onChange={(e) => setFormData({ ...formData, is_active_student: e.target.checked })}
-                  className="rounded border-slate-300 text-blue-600 focus:ring-blue-600"
+                  className="rounded border-slate-300 text-[#F36F00] focus:ring-[#F36F00]"
                 />
-                Tôi xác nhận là sinh viên đang theo học tại ĐH Kinh tế – ĐHĐN (Điều kiện cứng)
+                Tôi xác nhận là sinh viên đang theo học tại Đại học Kinh tế - Đại học Đà Nẵng
               </label>
               <label className="inline-flex items-center gap-2 text-xs font-medium text-slate-700 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={formData.commitment_confirmed}
                   onChange={(e) => setFormData({ ...formData, commitment_confirmed: e.target.checked })}
-                  className="rounded border-slate-300 text-blue-600 focus:ring-blue-600"
+                  className="rounded border-slate-300 text-[#F36F00] focus:ring-[#F36F00]"
                 />
-                Tôi cam kết đảm bảo thời gian tham gia chuỗi sự kiện của CLB C-res (Điều kiện cứng)
+                Tôi cam kết đảm bảo thời gian tham gia hoạt động cùng Câu lạc bộ Thương mại C-RES
               </label>
             </div>
 
-            <div className="flex flex-wrap items-center justify-between gap-4 pt-4 border-t border-slate-200">
-              <button
-                type="button"
-                disabled={submitting}
-                onClick={(e) => handleSubmitApplication(e, true)}
-                className="px-4 py-2.5 text-xs font-bold text-[#7A6000] bg-[#FDD000]/30 hover:bg-[#FDD000]/45 border border-[#E5BC00] rounded-lg transition-colors whitespace-nowrap"
-              >
-                Nộp thử thiếu trường (Test Subprocess Bổ sung 2 ngày)
-              </button>
+            <div className="flex items-center justify-end pt-4 border-t border-slate-200">
               <button
                 type="submit"
                 disabled={submitting}
                 className="inline-flex items-center gap-2 px-6 py-2.5 text-sm font-bold text-white bg-[#F36F00] hover:bg-[#D96200] rounded-lg transition-colors whitespace-nowrap"
               >
                 <Send className="w-4 h-4" />
-                {submitting ? 'Đang xử lý...' : 'Nộp hồ sơ ứng tuyển'}
+                {submitting ? 'Đang gửi đơn...' : 'Gửi đơn ứng tuyển'}
               </button>
             </div>
           </form>
@@ -663,19 +639,11 @@ export function CandidatePortal({
                       <span>NV2: {app.second_choice_name}</span>
                     </>
                   )}
-                  {app.screening_score !== null && (
-                    <>
-                      <span>·</span>
-                      <span className="font-semibold text-blue-700">
-                        Điểm sơ loại: {app.screening_score}đ
-                      </span>
-                    </>
-                  )}
                 </div>
               </div>
 
-              {/* Withdraw Button available at ANY step before completion */}
-              {!isTerminated && (
+              {/* Withdraw Button available at ANY step (including after department assignment to test revoking assignment) */}
+              {canWithdraw && (
                 <button
                   type="button"
                   onClick={() => setShowWithdrawModal(true)}
@@ -717,32 +685,31 @@ export function CandidatePortal({
 
           {/* DYNAMIC ACTION PANEL BASED ON CURRENT STATE */}
 
-          {/* 1. SUBPROCESS: BỔ SUNG HỒ SƠ (needs_supplement) */}
+          {/* 1. BỔ SUNG HỒ SƠ (needs_supplement) */}
           {app.status === 'needs_supplement' && (
             <div className="bg-amber-50/70 border border-amber-300 rounded-xl p-6 space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                 <div className="space-y-1">
                   <div className="flex items-center gap-2 text-amber-900 font-bold text-base">
                     <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" />
-                    <span>Subprocess: Bổ sung hồ sơ thiếu thông tin</span>
+                    <span>
+                      Yêu cầu bổ sung thông tin hồ sơ (Lần {app.supplement_count + 1}/{round.supplement_max_rounds})
+                    </span>
                   </div>
                   <p className="text-xs text-amber-800">
-                    Hệ thống phát hiện hồ sơ của bạn còn thiếu trường bắt buộc. Chỉ hiển thị các trường đang thiếu bên dưới để bạn bổ sung nhanh.
+                    Hồ sơ của bạn còn thiếu trường bắt buộc. Hạn chờ bổ sung là {round.supplement_deadline_days} ngày (tối đa {round.supplement_max_rounds} lần bổ sung, quá hạn sẽ bị loại).
                   </p>
                 </div>
                 <div className="flex items-center gap-3 shrink-0 tabular-nums">
-                  <span className="px-3 py-1.5 text-xs font-bold bg-white border border-amber-300 rounded-lg text-amber-900">
-                    Lần bổ sung {app.supplement_count + 1}/{round.supplement_max_rounds}
-                  </span>
                   <span className="px-3 py-1.5 text-xs font-mono font-bold bg-amber-600 text-white rounded-lg">
-                    Hạn 2 ngày: {formatRemainingTime(app.supplement_deadline_at, systemNow).text}
+                    Thời hạn còn lại: {formatRemainingTime(app.supplement_deadline_at, systemNow).text}
                   </span>
                 </div>
               </div>
 
               <form onSubmit={handleSubmitSupplement} className="bg-white border border-amber-200 rounded-lg p-5 space-y-4">
                 <div className="text-xs font-semibold text-slate-700">
-                  Các trường cần bổ sung ({app.missing_fields?.length || 0} trường):
+                  Các thông tin cần bổ sung ({app.missing_fields?.length || 0} mục):
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -755,7 +722,7 @@ export function CandidatePortal({
                         htmlFor={`supp-${fieldKey}`}
                         className="block text-xs font-semibold text-slate-800 mb-1.5"
                       >
-                        {FIELD_LABELS[fieldKey] || fieldKey} <span className="text-red-600">* (Đang thiếu)</span>
+                        {FIELD_LABELS[fieldKey] || fieldKey} <span className="text-red-600">*</span>
                       </label>
                       {fieldKey === 'essay' || fieldKey === 'experience' ? (
                         <textarea
@@ -765,7 +732,7 @@ export function CandidatePortal({
                           onChange={(e) =>
                             setSupplementValues({ ...supplementValues, [fieldKey]: e.target.value })
                           }
-                          placeholder={`Nhập bổ sung ${FIELD_LABELS[fieldKey] || fieldKey}...`}
+                          placeholder={`Nhập ${FIELD_LABELS[fieldKey] || fieldKey}...`}
                           className="w-full px-3.5 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600"
                         />
                       ) : (
@@ -776,7 +743,7 @@ export function CandidatePortal({
                           onChange={(e) =>
                             setSupplementValues({ ...supplementValues, [fieldKey]: e.target.value })
                           }
-                          placeholder={`Nhập bổ sung ${FIELD_LABELS[fieldKey] || fieldKey}...`}
+                          placeholder={`Nhập ${FIELD_LABELS[fieldKey] || fieldKey}...`}
                           className="w-full px-3.5 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600"
                         />
                       )}
@@ -784,24 +751,21 @@ export function CandidatePortal({
                   ))}
                 </div>
 
-                <div className="flex items-center justify-between pt-3 border-t border-slate-100">
-                  <span className="text-xs text-slate-500">
-                    Lưu ý: Nếu gửi vẫn thiếu quá {round.supplement_max_rounds} lần hoặc để quá hạn 2 ngày, hệ thống sẽ tự động loại hồ sơ.
-                  </span>
+                <div className="flex items-center justify-end pt-3 border-t border-slate-100">
                   <button
                     type="submit"
                     disabled={submitting}
                     className="inline-flex items-center gap-2 px-5 py-2 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors whitespace-nowrap"
                   >
                     <Send className="w-3.5 h-3.5" />
-                    {submitting ? 'Đang gửi...' : 'Gửi hồ sơ bổ sung'}
+                    {submitting ? 'Đang gửi...' : 'Gửi thông tin bổ sung'}
                   </button>
                 </div>
               </form>
             </div>
           )}
 
-          {/* 2. STEP 8: INTERVIEW SLOT BOOKING (invited_to_book or booked) */}
+          {/* 2. INTERVIEW SLOT BOOKING (invited_to_book or booked) */}
           {(app.status === 'invited_to_book' || app.status === 'booked') && (
             <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-5">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-4 border-b border-slate-200">
@@ -810,20 +774,20 @@ export function CandidatePortal({
                     <Calendar className="w-5 h-5 text-blue-600" />
                     <span>
                       {app.status === 'invited_to_book'
-                        ? 'Bước 8: Chọn khung giờ phỏng vấn (Chỉ hiển thị khung giờ còn chỗ)'
-                        : 'Lịch phỏng vấn đã đặt & Check-in tại buổi phỏng vấn'}
+                        ? 'Chọn khung giờ phỏng vấn'
+                        : 'Lịch phỏng vấn của bạn'}
                     </span>
                   </h3>
                   <p className="text-xs text-slate-600 mt-0.5">
                     {app.status === 'invited_to_book'
-                      ? 'Sau 1 ngày chưa đặt lịch hệ thống sẽ nhắc 1 lần; sau 2 ngày chưa đặt lịch hệ thống sẽ tự động gạch tên.'
-                      : 'Bạn có thể bấm Check-in khi có mặt tại phòng phỏng vấn hoặc đổi sang khung giờ khác còn chỗ trước giờ bắt đầu.'}
+                      ? 'Vui lòng chọn một khung giờ phỏng vấn phù hợp với lịch cá nhân của bạn.'
+                      : 'Bạn có thể điểm danh khi có mặt tại phòng phỏng vấn hoặc đổi sang khung giờ khác còn chỗ trước giờ bắt đầu.'}
                   </p>
                 </div>
 
                 {app.status === 'invited_to_book' && app.schedule_deadline_at && (
                   <div className="px-3.5 py-2 bg-orange-50 border border-orange-200 rounded-lg text-xs font-mono font-semibold text-orange-900 tabular-nums shrink-0">
-                    Hạn đặt lịch (2 ngày): {formatRemainingTime(app.schedule_deadline_at, systemNow).text}
+                    Thời hạn đặt lịch: {formatRemainingTime(app.schedule_deadline_at, systemNow).text}
                   </div>
                 )}
               </div>
@@ -834,17 +798,24 @@ export function CandidatePortal({
                   <div className="space-y-1">
                     <div className="text-xs font-semibold text-blue-800">Khung giờ đã đặt của bạn:</div>
                     <div className="text-sm font-bold text-slate-900 tabular-nums">
-                      {app.booking.start_at ? new Date(app.booking.start_at).toLocaleString('vi-VN') : ''} —{' '}
-                      {app.booking.location_or_link}
+                      {app.booking.start_at
+                        ? new Date(app.booking.start_at).toLocaleString('vi-VN', {
+                            timeZone: 'Asia/Ho_Chi_Minh',
+                          })
+                        : ''}{' '}
+                      — {app.booking.location_or_link}
                     </div>
                     <div className="text-xs text-slate-600">
-                      Trạng thái Check-in:{' '}
+                      Trạng thái điểm danh:{' '}
                       {app.booking.checked_in_at ? (
                         <span className="font-semibold text-emerald-700">
-                          Đã check-in lúc {new Date(app.booking.checked_in_at).toLocaleString('vi-VN')}
+                          Đã điểm danh lúc{' '}
+                          {new Date(app.booking.checked_in_at).toLocaleString('vi-VN', {
+                            timeZone: 'Asia/Ho_Chi_Minh',
+                          })}
                         </span>
                       ) : (
-                        <span className="font-semibold text-amber-700">Chưa check-in</span>
+                        <span className="font-semibold text-amber-700">Chưa điểm danh</span>
                       )}
                     </div>
                   </div>
@@ -856,7 +827,7 @@ export function CandidatePortal({
                       className="inline-flex items-center gap-2 px-5 py-2.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors whitespace-nowrap shrink-0"
                     >
                       <UserCheck className="w-4 h-4" />
-                      Check-in tham gia phỏng vấn ngay
+                      Điểm danh tham gia phỏng vấn
                     </button>
                   )}
                 </div>
@@ -886,7 +857,9 @@ export function CandidatePortal({
                         <div className="space-y-1.5">
                           <div className="flex items-center justify-between gap-2">
                             <span className="text-xs font-mono font-semibold text-slate-900 tabular-nums">
-                              {new Date(slot.start_at).toLocaleDateString('vi-VN')}
+                              {new Date(slot.start_at).toLocaleDateString('vi-VN', {
+                                timeZone: 'Asia/Ho_Chi_Minh',
+                              })}
                             </span>
                             <span className="text-xs font-mono text-blue-700 font-semibold tabular-nums">
                               Còn {rem}/{slot.capacity} chỗ
@@ -896,11 +869,13 @@ export function CandidatePortal({
                             {new Date(slot.start_at).toLocaleTimeString('vi-VN', {
                               hour: '2-digit',
                               minute: '2-digit',
+                              timeZone: 'Asia/Ho_Chi_Minh',
                             })}{' '}
                             –{' '}
                             {new Date(slot.end_at).toLocaleTimeString('vi-VN', {
                               hour: '2-digit',
                               minute: '2-digit',
+                              timeZone: 'Asia/Ho_Chi_Minh',
                             })}
                           </div>
                           <div className="text-xs text-slate-600">{slot.location_or_link}</div>
@@ -933,152 +908,121 @@ export function CandidatePortal({
             </div>
           )}
 
-          {/* 3. PARALLEL INTERVIEWING / SCORED STATUS */}
+          {/* 3. INTERVIEWING / SCORED STATUS */}
           {(app.status === 'interviewing' || app.status === 'scored' || app.status === 'decided_pass' || app.status === 'decided_fail') && (
             <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-3">
               <h3 className="text-base font-bold text-slate-900">
-                Trạng thái Phỏng vấn & Chấm điểm song song (AND-join)
+                Thông tin buổi phỏng vấn
               </h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="p-4 rounded-lg bg-slate-50 border border-slate-200">
-                  <div className="text-xs text-slate-500">Nhánh 1 (Ứng viên Check-in):</div>
+                  <div className="text-xs text-slate-500">Trạng thái tham gia:</div>
                   <div className="text-sm font-semibold text-emerald-700 mt-1">
                     {app.booking?.checked_in_at
-                      ? `Đã check-in (${new Date(app.booking.checked_in_at).toLocaleString('vi-VN')})`
-                      : 'Chưa check-in'}
+                      ? `Đã điểm danh (${new Date(app.booking.checked_in_at).toLocaleString('vi-VN')})`
+                      : 'Chưa điểm danh'}
                   </div>
                 </div>
                 <div className="p-4 rounded-lg bg-slate-50 border border-slate-200">
-                  <div className="text-xs text-slate-500">Nhánh 2 (Ban Chủ nhiệm chấm phiếu điểm):</div>
-                  <div className="text-sm font-semibold text-blue-700 mt-1 tabular-nums">
-                    Đã nhận {app.scorecards?.length || 0}/{round.min_scorecards_per_interview} phiếu chấm điểm tối thiểu
+                  <div className="text-xs text-slate-500">Trạng thái kết quả:</div>
+                  <div className="text-sm font-semibold text-blue-700 mt-1">
+                    Ban Chủ nhiệm đang tổng hợp kết quả phỏng vấn
                   </div>
                 </div>
               </div>
-              <p className="text-xs text-slate-600">
-                Hệ thống xử lý từng ứng viên ngay khi hội tụ đủ Check-in và số phiếu điểm mà không bắt bạn phải chờ toàn bộ đợt phỏng vấn kết thúc.Kết quả chính thức sẽ được gửi ngay khi Ban Chủ nhiệm bấm "Chốt và gửi".
-              </p>
             </div>
           )}
 
-          {/* 4. STEP 12: OFFER SENT -> 1-CLICK CONFIRM & JOIN GROUP */}
+          {/* 4. OFFER SENT -> CONFIRM & JOIN GROUP */}
           {app.status === 'offer_sent' && (
             <div className="bg-emerald-50 border border-emerald-300 rounded-xl p-6 space-y-4">
               <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                 <div className="space-y-1">
                   <div className="flex items-center gap-2 text-emerald-900 font-bold text-lg">
                     <Award className="w-6 h-6 text-emerald-600" />
-                    <span>Chúc mừng bạn đã ĐẬU vòng Phỏng vấn CLB C-res!</span>
+                    <span>Chúc mừng bạn đã trúng tuyển vòng Phỏng vấn Câu lạc bộ Thương mại C-RES!</span>
                   </div>
                   <p className="text-xs text-emerald-800">
-                    Bước 12 (Gộp một bước duy nhất): Hãy bấm nút "Xác nhận và tham gia nhóm" bên dưới để xác nhận làm CTV và nhận ngay đường dẫn nhóm sinh hoạt chung.
+                    Bạn hãy bấm nút xác nhận bên dưới để gia nhập ngôi nhà chung C-RES và nhận đường dẫn vào nhóm sinh hoạt nhé.
                   </p>
                 </div>
                 <button
                   type="button"
                   disabled={submitting}
                   onClick={handleConfirmJoinGroup}
-                  className="inline-flex items-center gap-2 px-6 py-3 text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl transition-colors whitespace-nowrap shrink-0"
+                  className="inline-flex items-center gap-2 px-6 py-3 text-sm font-bold text-white bg-[#F36F00] hover:bg-[#D96200] rounded-xl transition-colors whitespace-nowrap shrink-0"
                 >
                   <CheckCircle2 className="w-4 h-4" />
-                  {submitting ? 'Đang xác nhận...' : 'Xác nhận và tham gia nhóm ngay'}
+                  {submitting ? 'Đang xác nhận...' : 'Xác nhận tham gia C-RES'}
                 </button>
               </div>
             </div>
           )}
 
-          {/* 5. STEP 12-14: CONFIRMED JOINED / ASSIGNED / COMPLETED */}
+          {/* 5. CONFIRMED JOINED / ASSIGNED / COMPLETED */}
           {['confirmed_joined', 'assigned', 'completed'].includes(app.status) && (
             <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-slate-200">
                 <div>
-                  <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                    <Sparkles className="w-5 h-5 text-blue-600" />
+                  <h3 className="text-base font-bold text-[#1E293B] flex items-center gap-2">
+                    <Sparkles className="w-5 h-5 text-[#F36F00]" />
                     <span>Nhóm sinh hoạt CLB & Thông tin Phân công Ban</span>
                   </h3>
                   <p className="text-xs text-slate-600 mt-0.5">
-                    Bạn đã xác nhận tham gia CLB C-res. Dưới đây là đường dẫn nhóm chính thức và kết quả phân ban.
+                    Bạn đã xác nhận tham gia Câu lạc bộ Thương mại C-RES. Dưới đây là nhóm sinh hoạt chung và ban hoạt động của bạn.
                   </p>
                 </div>
                 <a
                   href={round.group_link}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors whitespace-nowrap shrink-0"
+                  className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-[#F36F00] hover:bg-[#D96200] rounded-lg transition-colors whitespace-nowrap shrink-0"
                 >
                   <ExternalLink className="w-3.5 h-3.5" />
-                  Mở nhóm Zalo/Discord CLB ({round.group_link})
+                  Tham gia nhóm CLB ({round.group_link})
                 </a>
               </div>
 
               {app.assignment && app.assignment.status === 'confirmed' ? (
                 <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4 space-y-1.5">
                   <div className="text-xs font-semibold text-emerald-800">
-                    Ban phân công chính thức (Đã được Ban Nhân sự chốt):
+                    Ban công tác chính thức:
                   </div>
                   <div className="text-lg font-bold text-emerald-950">
                     {app.assignment.department_name}
                   </div>
-                  {app.assignment.ai_reason && (
-                    <p className="text-xs text-emerald-800">
-                      Đánh giá phù hợp: {app.assignment.ai_reason}
-                    </p>
-                  )}
                 </div>
               ) : (
                 <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 text-xs text-slate-600">
-                  Ban Nhân sự đang rà soát gợi ý từ AI để phân công vị trí/ban phù hợp nhất với điểm số và nguyện vọng của bạn.
+                  Ban Nhân sự đang sắp xếp vị trí phân ban phù hợp cho bạn. Kết quả phân ban sẽ được thông báo sớm nhất.
                 </div>
               )}
             </div>
           )}
 
-          {/* Notifications & Audit Trail for Candidate */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-4">
-              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                <FileText className="w-4 h-4 text-blue-600" />
-                <span>Hộp thư Thông báo của tôi ({notifications.length})</span>
-              </h3>
-              {notifications.length === 0 ? (
-                <p className="text-xs text-slate-500">Chưa có thông báo nào.</p>
-              ) : (
-                <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
-                  {notifications.map((n) => (
-                    <div key={n.id} className="p-3.5 rounded-lg bg-slate-50 border border-slate-200 space-y-1">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs font-bold text-slate-900">{n.subject}</span>
-                        <span className="text-[11px] font-mono text-slate-500 tabular-nums shrink-0">
-                          {new Date(n.created_at).toLocaleString('vi-VN')}
-                        </span>
-                      </div>
-                      <p className="text-xs text-slate-600 whitespace-pre-line">{n.body}</p>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-4">
-              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                <Clock className="w-4 h-4 text-blue-600" />
-                <span>Lịch sử chuyển trạng thái & Audit Log ({auditLogs.length})</span>
-              </h3>
-              <div className="space-y-2.5 max-h-80 overflow-y-auto pr-1">
-                {auditLogs.map((log) => (
-                  <div key={log.id} className="p-3 rounded-lg bg-slate-50 border border-slate-200 text-xs space-y-1">
+          {/* Candidate Inbox Notifications */}
+          <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-4">
+            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+              <FileText className="w-4 h-4 text-blue-600" />
+              <span>Hộp thư Thông báo của tôi ({notifications.length})</span>
+            </h3>
+            {notifications.length === 0 ? (
+              <p className="text-xs text-slate-500">Chưa có thông báo nào.</p>
+            ) : (
+              <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
+                {notifications.map((n) => (
+                  <div key={n.id} className="p-3.5 rounded-lg bg-slate-50 border border-slate-200 space-y-1">
                     <div className="flex items-center justify-between gap-2">
-                      <span className="font-mono font-semibold text-blue-700">{log.action}</span>
-                      <span className="text-[11px] font-mono text-slate-500 tabular-nums">
-                        {new Date(log.created_at).toLocaleString('vi-VN')}
+                      <span className="text-xs font-bold text-slate-900">{n.subject}</span>
+                      <span className="text-[11px] font-mono text-slate-500 tabular-nums shrink-0">
+                        {new Date(n.created_at).toLocaleString('vi-VN')}
                       </span>
                     </div>
-                    <div className="text-slate-800">{log.result}</div>
-                    <div className="text-[11px] text-slate-500 font-mono">Luật: {log.rule_applied}</div>
+                    <p className="text-xs text-slate-600 whitespace-pre-line">{n.body}</p>
                   </div>
                 ))}
               </div>
-            </div>
+            )}
           </div>
         </div>
       )}
@@ -1093,10 +1037,10 @@ export function CandidatePortal({
         >
           <div className="bg-white border border-slate-200 rounded-xl max-w-md w-full p-6 space-y-4 shadow-xl">
             <h3 className="text-base font-bold text-slate-900">
-              Xác nhận Rút đơn ứng tuyển (Ngoại lệ toàn quy trình)
+              Xác nhận rút đơn ứng tuyển
             </h3>
             <p className="text-xs text-slate-600">
-              Khi bạn bấm xác nhận rút đơn, hệ thống sẽ tự động hủy toàn bộ bộ đếm giờ đang chạy của hồ sơ này. Nếu bạn đã được phân công vào ban, hệ thống sẽ tự động hoàn tác phân công để trả lại chỉ tiêu cho ban.
+              Bạn có chắc chắn muốn rút hồ sơ khỏi đợt tuyển Cộng tác viên này không?
             </p>
             <form onSubmit={handleWithdraw} className="space-y-4">
               <div>

@@ -1,7 +1,8 @@
 import Database from 'better-sqlite3';
+import os from 'os';
 import path from 'path';
 
-const dbPath = path.resolve(process.cwd(), 'cres-recruit.db');
+const dbPath = process.env.CRES_DB_PATH || path.join(os.tmpdir(), 'cres-recruit.db');
 export const db = new Database(dbPath);
 
 db.pragma('journal_mode = WAL');

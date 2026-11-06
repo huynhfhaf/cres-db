@@ -19,6 +19,8 @@ export async function apiRequest<T = any>(
   const token = getStoredToken();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
+    'Cache-Control': 'no-cache, no-store, must-revalidate',
+    Pragma: 'no-cache',
     ...(options.headers as Record<string, string>),
   };
 
@@ -28,6 +30,7 @@ export async function apiRequest<T = any>(
 
   const res = await fetch(`/api${path}`, {
     ...options,
+    cache: 'no-store',
     headers,
   });
 

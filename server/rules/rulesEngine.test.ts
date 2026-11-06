@@ -11,7 +11,8 @@ import {
   canConvergeInterviewAndJoin,
   isValidStateTransition,
   fallbackAssignmentSuggestion,
-} from './rulesEngine';
+  ALL_APPLICATION_STATUSES,
+} from './rulesEngine.ts';
 
 test('checkRequiredFields identifies missing mandatory fields accurately', () => {
   const incomplete = checkRequiredFields({
@@ -61,7 +62,7 @@ test('isNearThreshold detects clear_fail scores within configured margin of Y', 
   assert.equal(isNearThreshold(48, false, 50, 5), false);
 });
 
-test('computeTotalScore calculates weighted normalized score across multiple scorecards', () => {
+test('computeTotalScore calculates weighted normalized score and preserves 0.00 score (F04)', () => {
   const criteria = [
     { id: 'c1', weight: 60, max_score: 10 },
     { id: 'c2', weight: 40, max_score: 10 },
@@ -71,6 +72,10 @@ test('computeTotalScore calculates weighted normalized score across multiple sco
     { scores: { c1: 9, c2: 7 } }, // 90*0.6 + 70*0.4 = 54 + 28 = 82
   ];
   assert.equal(computeTotalScore(scorecards, criteria), 83);
+
+  // Zero-score scorecard must return 0 (not null or falsy fallback)
+  const zeroScorecard = [{ scores: { c1: 0, c2: 0 } }];
+  assert.equal(computeTotalScore(zeroScorecard, criteria), 0);
 });
 
 test('canBook enforces slot capacity, duplicate booking, and start time', () => {
@@ -112,13 +117,13 @@ test('shouldRemind and shouldDrop evaluate 1-day and 2-day timers accurately', (
   assert.equal(shouldDrop(app, after2Days), true);
 });
 
-test('canConvergeInterviewAndJoin requires both check-in and minimum scorecards', () => {
+test('canConvergeInterviewAndJoin requires both check-in and minimum scorecards (F10)', () => {
   assert.equal(canConvergeInterviewAndJoin(null, 2, 1), false);
   assert.equal(canConvergeInterviewAndJoin('2026-11-03T10:00:00Z', 0, 1), false);
   assert.equal(canConvergeInterviewAndJoin('2026-11-03T10:00:00Z', 1, 1), true);
 });
 
-test('fallbackAssignmentSuggestion respects department quotas and candidate preferences', () => {
+test('fallbackAssignmentSuggestion respects department quotas and returns empty departmentId when all quotas are 0', () => {
   const candidates = [
     { applicationId: 'a1', fullName: 'A', totalScore: 92, firstChoiceDeptId: 'd1', secondChoiceDeptId: 'd2' },
     { applicationId: 'a2', fullName: 'B', totalScore: 85, firstChoiceDeptId: 'd1', secondChoiceDeptId: 'd2' },
@@ -130,11 +135,28 @@ test('fallbackAssignmentSuggestion respects department quotas and candidate pref
   const assigned = fallbackAssignmentSuggestion(candidates, depts);
   assert.equal(assigned.find((x) => x.applicationId === 'a1')?.departmentId, 'd1');
   assert.equal(assigned.find((x) => x.applicationId === 'a2')?.departmentId, 'd2');
+
+  const fullDepts = [
+    { id: 'd1', name: 'Truyền thông', remainingQuota: 0 },
+    { id: 'd2', name: 'Hậu cần', remainingQuota: 0 },
+  ];
+  const unassigned = fallbackAssignmentSuggestion(candidates, fullDepts);
+  assert.equal(unassigned.find((x) => x.applicationId === 'a1')?.departmentId, '');
+  assert.equal(unassigned.find((x) => x.applicationId === 'a2')?.departmentId, '');
 });
 
-test('isValidStateTransition enforces state machine rules and allows withdrawal before end', () => {
+test('isValidStateTransition enforces strict To-Be state machine rules and prevents stage skipping (F03)', () => {
+  assert.equal(ALL_APPLICATION_STATUSES.length, 25);
   assert.equal(isValidStateTransition('submitted', 'checking'), true);
   assert.equal(isValidStateTransition('submitted', 'completed'), false);
+  assert.equal(isValidStateTransition('submitted', 'decided_pass'), false);
+  assert.equal(isValidStateTransition('needs_supplement', 'decided_pass'), false);
+  assert.equal(isValidStateTransition('invited_to_book', 'scored'), false);
   assert.equal(isValidStateTransition('invited_to_book', 'withdrawn'), true);
-  assert.equal(isValidStateTransition('completed', 'withdrawn'), false);
+  assert.equal(isValidStateTransition('assigned', 'withdrawn'), true);
+  assert.equal(isValidStateTransition('completed', 'withdrawn'), true);
+  assert.equal(isValidStateTransition('completed', 'scored'), false);
+  assert.equal(isValidStateTransition('rejected_docs', 'invited_to_book'), false);
+  assert.equal(isValidStateTransition('failed_interview', 'scored'), false);
+  assert.equal(isValidStateTransition('withdrawn', 'checking'), false);
 });

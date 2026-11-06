@@ -6,37 +6,37 @@ export function StatusBadge({ status }: { status: ApplicationStatus }) {
   const label = STATUS_LABELS[status] || status;
 
   const colorMap: Record<ApplicationStatus, string> = {
-    submitted: 'bg-[#435B61]/10 text-[#435B61] border-[#435B61]/30',
-    checking: 'bg-[#31B5D8]/12 text-[#16748E] border-[#31B5D8]/40',
-    needs_supplement: 'bg-[#FDD000]/25 text-[#856700] border-[#FDD000]',
-    supplement_submitted: 'bg-[#31B5D8]/12 text-[#16748E] border-[#31B5D8]/40',
-    expired_supplement: 'bg-[#435B61]/15 text-[#435B61] border-[#435B61]/40',
-    screening: 'bg-[#31B5D8]/12 text-[#16748E] border-[#31B5D8]/40',
-    clear_pass: 'bg-[#68A225]/12 text-[#426915] border-[#68A225]/40',
-    needs_review: 'bg-[#F36F00]/12 text-[#C45800] border-[#F36F00]/40',
-    clear_fail: 'bg-rose-50 text-rose-800 border-rose-300',
-    review_pass: 'bg-[#68A225]/12 text-[#426915] border-[#68A225]/40',
-    review_fail: 'bg-rose-50 text-rose-800 border-rose-300',
-    rejected_docs: 'bg-red-50 text-red-800 border-red-300',
-    invited_to_book: 'bg-[#31B5D8]/15 text-[#146D85] border-[#31B5D8]/45',
-    booked: 'bg-[#31B5D8]/20 text-[#0F5C70] border-[#31B5D8]/50',
-    no_booking: 'bg-[#FDD000]/25 text-[#856700] border-[#FDD000]',
-    interviewing: 'bg-[#F36F00]/15 text-[#B85200] border-[#F36F00]/40',
-    scored: 'bg-[#31B5D8]/15 text-[#146D85] border-[#31B5D8]/45',
-    decided_pass: 'bg-[#68A225]/15 text-[#3F6513] border-[#68A225]/45',
-    decided_fail: 'bg-rose-100 text-rose-900 border-rose-300',
-    failed_interview: 'bg-red-100 text-red-900 border-red-300',
-    offer_sent: 'bg-[#68A225]/15 text-[#3F6513] border-[#68A225]/45',
-    confirmed_joined: 'bg-[#31B5D8]/15 text-[#146D85] border-[#31B5D8]/45',
-    assigned: 'bg-[#F36F00]/15 text-[#B85200] border-[#F36F00]/45',
-    completed: 'bg-[#68A225] text-white border-[#588A1E]',
-    withdrawn: 'bg-[#435B61]/15 text-[#435B61] border-[#435B61]/35',
+    submitted: 'bg-slate-100 text-slate-700 border-slate-200',
+    checking: 'bg-slate-100 text-slate-700 border-slate-200',
+    needs_supplement: 'bg-amber-50 text-amber-800 border-amber-200',
+    supplement_submitted: 'bg-sky-50 text-sky-800 border-sky-200',
+    expired_supplement: 'bg-slate-100 text-slate-600 border-slate-300',
+    screening: 'bg-sky-50 text-sky-800 border-sky-200',
+    clear_pass: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+    needs_review: 'bg-orange-50 text-[#C45800] border-orange-200',
+    clear_fail: 'bg-rose-50 text-rose-800 border-rose-200',
+    review_pass: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+    review_fail: 'bg-rose-50 text-rose-800 border-rose-200',
+    rejected_docs: 'bg-red-50 text-red-700 border-red-200',
+    invited_to_book: 'bg-orange-50 text-[#C45800] border-orange-200',
+    booked: 'bg-sky-50 text-sky-800 border-sky-200',
+    no_booking: 'bg-amber-50 text-amber-800 border-amber-200',
+    interviewing: 'bg-orange-50 text-[#C45800] border-orange-200',
+    scored: 'bg-sky-50 text-sky-800 border-sky-200',
+    decided_pass: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+    decided_fail: 'bg-rose-50 text-rose-800 border-rose-200',
+    failed_interview: 'bg-red-50 text-red-700 border-red-200',
+    offer_sent: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+    confirmed_joined: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+    assigned: 'bg-orange-50 text-[#C45800] border-orange-200',
+    completed: 'bg-emerald-600 text-white border-emerald-600',
+    withdrawn: 'bg-slate-100 text-slate-600 border-slate-200',
   };
 
   return (
     <span
-      className={`inline-flex items-center px-2.5 py-0.5 text-xs font-semibold rounded border whitespace-nowrap shrink-0 ${
-        colorMap[status] || 'bg-white text-[#435B61] border-[#435B61]/30'
+      className={`inline-flex items-center px-2.5 py-0.5 text-xs font-semibold rounded-md border whitespace-nowrap shrink-0 ${
+        colorMap[status] || 'bg-slate-100 text-slate-700 border-slate-200'
       }`}
     >
       {label}
@@ -48,17 +48,17 @@ export function EndReasonBadge({ reason }: { reason: EndReason | null | undefine
   if (!reason) return null;
   const label = END_REASON_LABELS[reason] || reason;
   const styleMap: Record<EndReason, string> = {
-    completed: 'text-[#426915] bg-[#68A225]/12 border-[#68A225]/40',
+    completed: 'text-emerald-800 bg-emerald-50 border-emerald-200',
     rejected_docs: 'text-red-700 bg-red-50 border-red-200',
-    failed_interview: 'text-[#C45800] bg-[#F36F00]/12 border-[#F36F00]/40',
-    no_booking: 'text-[#856700] bg-[#FDD000]/25 border-[#FDD000]',
-    expired_supplement: 'text-[#435B61] bg-[#435B61]/12 border-[#435B61]/35',
-    withdrawn: 'text-[#435B61] bg-[#435B61]/10 border-[#435B61]/30',
+    failed_interview: 'text-rose-800 bg-rose-50 border-rose-200',
+    no_booking: 'text-amber-800 bg-amber-50 border-amber-200',
+    expired_supplement: 'text-slate-600 bg-slate-100 border-slate-200',
+    withdrawn: 'text-slate-600 bg-slate-100 border-slate-200',
   };
 
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 text-xs font-semibold rounded border whitespace-nowrap ${styleMap[reason]}`}>
-      Kết thúc: {label}
+    <span className={`inline-flex items-center px-2.5 py-0.5 text-xs font-semibold rounded-md border whitespace-nowrap ${styleMap[reason]}`}>
+      {label}
     </span>
   );
 }

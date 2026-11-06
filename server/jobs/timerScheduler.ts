@@ -1,8 +1,8 @@
-import { db, getSystemNow, getSetting, setSetting } from '../db/database';
-import type { Application, RecruitmentRound } from '../../src/types';
-import { isSupplementExpired, shouldRemind, shouldDrop } from '../rules/rulesEngine';
-import { transition, writeAuditLog } from '../services/stateMachine';
-import { NotificationService } from '../services/notificationService';
+import { db, getSystemNow, getSetting, setSetting } from '../db/database.ts';
+import type { Application, RecruitmentRound } from '../../src/types.ts';
+import { isSupplementExpired, shouldRemind, shouldDrop } from '../rules/rulesEngine.ts';
+import { transition, writeAuditLog } from '../services/stateMachine.ts';
+import { NotificationService } from '../services/notificationService.ts';
 
 export interface SchedulerScanSummary {
   scannedAt: string;
