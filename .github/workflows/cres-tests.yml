@@ -1,0 +1,51 @@
+name: C-RES Tests
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test and Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      NODE_ENV: test
+      DEMO_MODE: "true"
+      TIME_SCALE: "1"
+      JWT_SECRET: "cres-ci-test-only-not-for-production"
+      GEMINI_API_KEY: ""
+      CRES_DB_PATH: ${{ runner.temp }}/cres-ci.db
+
+    steps:
+      - name: Lay ma nguon
+        uses: actions/checkout@v6
+
+      - name: Cai Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      - name: Cai thu vien
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      - name: Chay kiem thu tu dong
+        run: npm test
+
+      - name: Kiem tra TypeScript
+        run: npm run lint --if-present
+
+      - name: Build ung dung
+        run: npm run build
