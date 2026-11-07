@@ -8,6 +8,9 @@ import {
   Save,
   History,
   FlaskConical,
+  Database,
+  AlertTriangle,
+  CheckCircle2,
 } from 'lucide-react';
 import { apiRequest } from '../api';
 import type {
@@ -17,6 +20,7 @@ import type {
   AuditLogItem,
 } from '../types';
 import { UserRoleBadge } from './UserRoleBadge';
+import { DemoDataConfirmModal } from './DemoDataConfirmModal';
 
 interface DashboardAndAdminProps {
   mode: 'dashboard' | 'admin';
@@ -144,12 +148,12 @@ export function DashboardAndAdmin({ mode, onSelectMode, onRefreshGlobal }: Dashb
   const handleReseed = async (seedMode: 'empty' | 'sample') => {
     setBusy(true);
     setBanner(null);
-    setConfirmSeedMode(null);
     try {
       const res = await apiRequest('/admin/seed', {
         method: 'POST',
         body: JSON.stringify({ mode: seedMode }),
       });
+      setConfirmSeedMode(null);
       setBanner({
         type: 'success',
         text:
@@ -161,9 +165,10 @@ export function DashboardAndAdmin({ mode, onSelectMode, onRefreshGlobal }: Dashb
       await loadAll();
       onRefreshGlobal();
     } catch (err) {
+      setConfirmSeedMode(null);
       setBanner({
         type: 'error',
-        text: err instanceof Error ? err.message : 'Chưa thể làm mới dữ liệu',
+        text: err instanceof Error ? err.message : 'Chưa thể thực hiện thao tác dữ liệu',
       });
     } finally {
       setBusy(false);
@@ -309,68 +314,91 @@ export function DashboardAndAdmin({ mode, onSelectMode, onRefreshGlobal }: Dashb
             Tua nhanh +2 ngày
           </button>
 
-          {confirmSeedMode === null ? (
-            <>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => setConfirmSeedMode('empty')}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg transition-colors whitespace-nowrap"
-              >
-                <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
-                Đặt lại đợt tuyển trống (0 hồ sơ)
-              </button>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => setConfirmSeedMode('sample')}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-[#1E293B] bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-lg transition-colors whitespace-nowrap"
-              >
-                <RotateCcw className="w-3.5 h-3.5 text-[#F36F00]" />
-                Nạp dữ liệu mẫu (17 ứng viên)
-              </button>
-            </>
-          ) : (
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-amber-50 border border-amber-300 rounded-lg text-xs">
-              <span className="font-semibold text-amber-950">
-                {confirmSeedMode === 'empty'
-                  ? 'Xác nhận xóa hết hồ sơ (về 0)?'
-                  : 'Xác nhận nạp dữ liệu mẫu (17 ứng viên)?'}
-              </span>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => handleReseed(confirmSeedMode)}
-                className="px-2.5 py-1 bg-[#F36F00] text-white font-bold rounded hover:bg-[#D96200]"
-              >
-                Đồng ý
-              </button>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => setConfirmSeedMode(null)}
-                className="px-2 py-1 text-slate-700 hover:underline font-medium"
-              >
-                Hủy
-              </button>
-            </div>
-          )}
+          {/* Demo Data Management Action Buttons */}
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => setConfirmSeedMode('empty')}
+            title="Xóa toàn bộ hồ sơ ứng tuyển và lượt đặt lịch trong đợt; bảo lưu cấu hình đợt tuyển, ca phỏng vấn và tài khoản nội bộ"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-slate-700 bg-white hover:bg-red-50 hover:text-red-700 hover:border-red-300 border border-slate-200 rounded-lg transition-colors whitespace-nowrap disabled:opacity-50"
+          >
+            <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
+            <span>Đặt lại đợt tuyển trống (0 hồ sơ)</span>
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => setConfirmSeedMode('sample')}
+            title="Khởi tạo 17 tài khoản (C01–C17) và 16 đơn ứng tuyển phân nhánh mẫu (C13 chưa nộp); bảo toàn tiến trình nếu đã có dữ liệu mẫu"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-[#1E293B] bg-slate-100 hover:bg-orange-50 hover:text-[#F36F00] hover:border-orange-300 border border-slate-200 rounded-lg transition-colors whitespace-nowrap disabled:opacity-50"
+          >
+            <Database className="w-3.5 h-3.5 text-[#F36F00]" />
+            <span>Nạp dữ liệu mẫu (17 ứng viên)</span>
+          </button>
         </div>
       </div>
 
+      {/* Helper Explanation Banner for Demo Data Actions */}
+      <div className="bg-slate-50/80 border border-slate-200/80 rounded-xl px-4 py-2.5 flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5 text-xs text-slate-600">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <span className="font-bold text-[#1E293B] flex items-center gap-1.5">
+            <Database className="w-3.5 h-3.5 text-[#F36F00]" />
+            Quản lý dữ liệu Demo:
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-red-500 shrink-0" />
+            <span>
+              <strong className="text-slate-800">Đặt lại trống:</strong> Xóa toàn bộ hồ sơ, điểm chấm & booking đợt hiện tại; bảo lưu tài khoản nội bộ, cấu hình đợt và danh mục ca phỏng vấn.
+            </span>
+          </span>
+          <span className="text-slate-300 hidden md:inline">•</span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#F36F00] shrink-0" />
+            <span>
+              <strong className="text-slate-800">Nạp dữ liệu mẫu:</strong> Khởi tạo 17 tài khoản (C01–C17) và 16 đơn ứng tuyển đa nhánh (C13 chưa nộp); giữ nguyên tiến trình nếu đã có.
+            </span>
+          </span>
+        </div>
+        <span className="text-[11px] text-slate-400 font-medium hidden lg:inline">
+          Luôn có hộp thoại xác nhận chi tiết trước khi thực thi
+        </span>
+      </div>
+
+      {/* Comprehensive Demo Data Confirmation Modal */}
+      <DemoDataConfirmModal
+        mode={confirmSeedMode}
+        busy={busy}
+        onConfirm={handleReseed}
+        onCancel={() => !busy && setConfirmSeedMode(null)}
+      />
+
       {banner && (
         <div
-          className={`p-4 rounded-xl border text-xs sm:text-sm flex items-center justify-between ${
+          className={`p-4 rounded-xl border text-xs sm:text-sm flex items-start justify-between gap-3 ${
             banner.type === 'success'
               ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
               : 'bg-red-50 border-red-200 text-red-900'
           }`}
         >
-          <span>{banner.text}</span>
+          <div className="flex items-start gap-2.5">
+            {banner.type === 'success' ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 mt-0.5 shrink-0" />
+            ) : (
+              <AlertTriangle className="w-4 h-4 text-red-600 mt-0.5 shrink-0" />
+            )}
+            <div className="space-y-0.5">
+              <div className="font-bold text-xs uppercase tracking-wide">
+                {banner.type === 'success' ? 'Thao tác dữ liệu thành công' : 'Đã xảy ra lỗi'}
+              </div>
+              <div className="text-xs text-slate-700 leading-relaxed whitespace-pre-line">
+                {banner.text}
+              </div>
+            </div>
+          </div>
           <button
             type="button"
             onClick={() => setBanner(null)}
-            className="text-xs font-semibold underline ml-4 shrink-0"
+            className="text-xs font-semibold underline shrink-0 hover:opacity-80 ml-2"
           >
             Đóng
           </button>
