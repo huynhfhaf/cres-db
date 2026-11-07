@@ -27,6 +27,17 @@ export interface AssignmentSuggestionItem {
   source: 'gemini' | 'fallback_rule';
 }
 
+export type AiAssignmentGenerator = (
+  candidates: CandidateForAiAssignment[],
+  departments: DepartmentQuotaInfo[]
+) => Promise<Array<{ applicationId: string; departmentId: string; reason: string }>>;
+
+let mockAiGenerator: AiAssignmentGenerator | null = null;
+
+export function setMockAiGenerator(generator: AiAssignmentGenerator | null): void {
+  mockAiGenerator = generator;
+}
+
 export async function generateDepartmentAssignments(
   candidates: CandidateForAiAssignment[],
   departments: DepartmentQuotaInfo[]
@@ -43,19 +54,31 @@ export async function generateDepartmentAssignments(
     };
   }
 
-  const apiKey = process.env.GEMINI_API_KEY;
-  const hasValidKey = Boolean(apiKey && apiKey !== 'MY_GEMINI_API_KEY' && apiKey.trim().length > 10);
+  const isTestMode = process.env.CRES_TEST_MODE === 'true';
+  const apiKey = isTestMode ? '' : process.env.GEMINI_API_KEY;
+  const hasValidKey = Boolean(
+    mockAiGenerator || (apiKey && apiKey !== 'MY_GEMINI_API_KEY' && apiKey.trim().length > 10)
+  );
 
   if (hasValidKey) {
     try {
-      const ai = new GoogleGenAI({
-        apiKey,
-        httpOptions: {
-          headers: {
-            'User-Agent': 'aistudio-build',
+      let parsed: Array<{
+        applicationId: string;
+        departmentId: string;
+        reason: string;
+      }>;
+
+      if (mockAiGenerator) {
+        parsed = await mockAiGenerator(candidates, departments);
+      } else {
+        const ai = new GoogleGenAI({
+          apiKey,
+          httpOptions: {
+            headers: {
+              'User-Agent': 'aistudio-build',
+            },
           },
-        },
-      });
+        });
 
       const prompt = `Bạn là chuyên gia nhân sự hỗ trợ Ban Nhân sự Câu lạc bộ Thương mại C-RES (Đại học Kinh tế - Đại học Đà Nẵng) phân công Cộng tác viên (CTV) mới vào 3 ban: Ban Truyền thông, Ban Nhân sự, Ban Kinh doanh.
 
@@ -101,11 +124,12 @@ Yêu cầu:
       });
 
       const rawText = (response.text ?? '[]').trim();
-      const parsed = JSON.parse(rawText) as Array<{
+      parsed = JSON.parse(rawText) as Array<{
         applicationId: string;
         departmentId: string;
         reason: string;
       }>;
+      }
 
       // Validate completeness & quota constraints strictly by code
       const validDeptIds = new Set(departments.map((d) => d.id));
