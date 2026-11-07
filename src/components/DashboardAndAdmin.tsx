@@ -16,9 +16,11 @@ import type {
   ScoringCriterion,
   AuditLogItem,
 } from '../types';
+import { UserRoleBadge } from './UserRoleBadge';
 
 interface DashboardAndAdminProps {
   mode: 'dashboard' | 'admin';
+  onSelectMode?: (mode: 'dashboard' | 'admin') => void;
   onRefreshGlobal: () => void;
 }
 
@@ -50,7 +52,7 @@ interface ScreeningTestResponse {
   evaluation?: ScreeningEvaluation;
 }
 
-export function DashboardAndAdmin({ mode, onRefreshGlobal }: DashboardAndAdminProps) {
+export function DashboardAndAdmin({ mode, onSelectMode, onRefreshGlobal }: DashboardAndAdminProps) {
   const [stats, setStats] = useState<any>(null);
   const [adminData, setAdminData] = useState<{
     round: RecruitmentRound;
@@ -229,6 +231,39 @@ export function DashboardAndAdmin({ mode, onRefreshGlobal }: DashboardAndAdminPr
 
   return (
     <div className="space-y-6">
+      {/* Sub-navigation for Admin */}
+      {onSelectMode && (
+        <div className="bg-white border border-slate-200 rounded-xl p-2 flex flex-wrap items-center justify-between gap-2 shadow-2xs">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => onSelectMode('dashboard')}
+              className={`px-4 py-2 text-xs font-bold rounded-lg transition-colors whitespace-nowrap ${
+                mode === 'dashboard'
+                  ? 'bg-[#F36F00] text-white'
+                  : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              1. Tổng quan đợt tuyển (Thống kê)
+            </button>
+            <button
+              type="button"
+              onClick={() => onSelectMode('admin')}
+              className={`px-4 py-2 text-xs font-bold rounded-lg transition-colors whitespace-nowrap ${
+                mode === 'admin'
+                  ? 'bg-[#F36F00] text-white'
+                  : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              2. Cài đặt đợt tuyển & Nhật ký
+            </button>
+          </div>
+          <div className="pr-1">
+            <UserRoleBadge role="admin" size="sm" />
+          </div>
+        </div>
+      )}
+
       {/* Time-Travel & Brand Control Bar */}
       <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 shadow-2xs">
         <div className="flex items-start sm:items-center gap-3.5">
@@ -238,8 +273,9 @@ export function DashboardAndAdmin({ mode, onRefreshGlobal }: DashboardAndAdminPr
             className="h-11 w-auto object-contain hidden sm:block shrink-0"
           />
           <div className="space-y-0.5">
-            <div className="text-xs font-bold text-[#1E293B]">
-              Câu lạc bộ Thương mại C-RES · Đại học Kinh tế - Đại học Đà Nẵng
+            <div className="text-xs font-bold text-[#1E293B] flex flex-wrap items-center gap-2">
+              <span>Câu lạc bộ Thương mại C-RES · Đại học Kinh tế - Đại học Đà Nẵng</span>
+              <UserRoleBadge role="admin" size="sm" />
             </div>
             <div className="flex items-center gap-1.5 text-xs font-semibold text-[#F36F00] tabular-nums">
               <Clock className="w-3.5 h-3.5 text-[#F36F00]" />

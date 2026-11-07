@@ -1,5 +1,12 @@
 export type UserRole = 'candidate' | 'hr' | 'board' | 'admin';
 
+export const ROLE_LABELS: Record<UserRole, string> = {
+  candidate: 'Ứng viên',
+  hr: 'Ban Nhân sự',
+  board: 'Ban Chủ nhiệm',
+  admin: 'Quản trị viên',
+};
+
 export type ApplicationStatus =
   | 'submitted'
   | 'checking'

@@ -25,6 +25,7 @@ import type {
   ApplicationStatus,
 } from './types';
 import { StatusBadge, getStatusMeta } from './components/StatusBadge';
+import { UserRoleBadge, UserAccountInfo } from './components/UserRoleBadge';
 import { CandidatePortal } from './components/CandidatePortal';
 import { HrPortal } from './components/HrPortal';
 import { BoardPortal } from './components/BoardPortal';
@@ -646,9 +647,12 @@ export default function App() {
                         onClick={() => handleDemoSwitch({ role: 'hr' }, 'hr')}
                         className="p-2.5 text-left rounded-lg bg-white hover:border-[#F36F00] border border-slate-200 transition-all"
                       >
-                        <div className="text-xs font-bold text-[#1E293B] flex items-center gap-1.5">
-                          <Users className="w-3.5 h-3.5 shrink-0 text-[#F36F00]" />
-                          <span>Ban Nhân sự (BNS)</span>
+                        <div className="flex items-center justify-between gap-1.5">
+                          <div className="text-xs font-bold text-[#1E293B] flex items-center gap-1.5">
+                            <Users className="w-3.5 h-3.5 shrink-0 text-[#F36F00]" />
+                            <span>Ban Nhân sự (BNS)</span>
+                          </div>
+                          <UserRoleBadge role="hr" size="sm" />
                         </div>
                         <div className="text-[11px] text-slate-500 mt-0.5 truncate">hr@cres.due.udn.vn</div>
                       </button>
@@ -658,9 +662,12 @@ export default function App() {
                         onClick={() => handleDemoSwitch({ role: 'board' }, 'board')}
                         className="p-2.5 text-left rounded-lg bg-white hover:border-[#F36F00] border border-slate-200 transition-all"
                       >
-                        <div className="text-xs font-bold text-[#1E293B] flex items-center gap-1.5">
-                          <Award className="w-3.5 h-3.5 shrink-0 text-[#F36F00]" />
-                          <span>Ban Chủ nhiệm (BCN)</span>
+                        <div className="flex items-center justify-between gap-1.5">
+                          <div className="text-xs font-bold text-[#1E293B] flex items-center gap-1.5">
+                            <Award className="w-3.5 h-3.5 shrink-0 text-[#F36F00]" />
+                            <span>Ban Chủ nhiệm (BCN)</span>
+                          </div>
+                          <UserRoleBadge role="board" size="sm" />
                         </div>
                         <div className="text-[11px] text-slate-500 mt-0.5 truncate">bcn@cres.due.udn.vn</div>
                       </button>
@@ -670,9 +677,12 @@ export default function App() {
                         onClick={() => handleDemoSwitch({ role: 'admin' }, 'dashboard')}
                         className="p-2.5 text-left rounded-lg bg-white hover:border-[#F36F00] border border-slate-200 transition-all"
                       >
-                        <div className="text-xs font-bold text-[#1E293B] flex items-center gap-1.5">
-                          <LayoutDashboard className="w-3.5 h-3.5 shrink-0 text-[#F36F00]" />
-                          <span>Tổng quan đợt tuyển</span>
+                        <div className="flex items-center justify-between gap-1.5">
+                          <div className="text-xs font-bold text-[#1E293B] flex items-center gap-1.5">
+                            <LayoutDashboard className="w-3.5 h-3.5 shrink-0 text-[#F36F00]" />
+                            <span>Tổng quan đợt tuyển</span>
+                          </div>
+                          <UserRoleBadge role="admin" size="sm" />
                         </div>
                         <div className="text-[11px] text-slate-500 mt-0.5">Thống kê & Tiến độ</div>
                       </button>
@@ -682,9 +692,12 @@ export default function App() {
                         onClick={() => handleDemoSwitch({ role: 'admin' }, 'admin')}
                         className="p-2.5 text-left rounded-lg bg-white hover:border-[#F36F00] border border-slate-200 transition-all"
                       >
-                        <div className="text-xs font-bold text-[#1E293B] flex items-center gap-1.5">
-                          <Settings className="w-3.5 h-3.5 shrink-0 text-[#F36F00]" />
-                          <span>Cài đặt đợt tuyển</span>
+                        <div className="flex items-center justify-between gap-1.5">
+                          <div className="text-xs font-bold text-[#1E293B] flex items-center gap-1.5">
+                            <Settings className="w-3.5 h-3.5 shrink-0 text-[#F36F00]" />
+                            <span>Cài đặt đợt tuyển</span>
+                          </div>
+                          <UserRoleBadge role="admin" size="sm" />
                         </div>
                         <div className="text-[11px] text-slate-500 mt-0.5">Chỉ tiêu 3 Ban & Tiêu chí</div>
                       </button>
@@ -723,26 +736,28 @@ export default function App() {
           </div>
         </div>
 
-        {/* Zone 2: User Identity, Facebook Link, Notifications & Logout */}
-        <div className="flex items-center gap-2.5 shrink-0 text-xs">
-          <span className="text-slate-600 hidden lg:inline">
-            Xin chào, <strong className="text-[#1E293B]">{user.full_name}</strong>
-          </span>
+        {/* Zone 2: User Identity with Role Badge, Facebook Link, Notifications & Logout */}
+        <div className="flex items-center gap-2 sm:gap-2.5 shrink-0 text-xs">
+          <UserAccountInfo
+            fullName={user.full_name}
+            email={user.email}
+            role={user.role}
+          />
           <a
             href={CRES_FACEBOOK_URL}
             target="_blank"
             rel="noopener noreferrer"
             aria-label="Trang Facebook Câu lạc bộ Thương mại C-RES"
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white border border-slate-200 hover:border-[#F36F00] text-[#1E293B] font-semibold transition-colors"
+            className="hidden lg:inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white border border-slate-200 hover:border-[#F36F00] text-[#1E293B] font-semibold transition-colors"
           >
             <FacebookIcon className="w-4 h-4 text-[#1877F2]" />
-            <span className="hidden md:inline">Facebook C-RES</span>
+            <span>Facebook C-RES</span>
           </a>
           <button
             type="button"
             onClick={handleOpenNotifDrawer}
             aria-label="Mở hộp thư thông báo"
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-white border border-slate-200 hover:border-[#F36F00] text-[#1E293B] font-semibold transition-colors"
+            className="inline-flex items-center gap-1.5 px-2.5 sm:px-3.5 py-2 rounded-lg bg-white border border-slate-200 hover:border-[#F36F00] text-[#1E293B] font-semibold transition-colors"
           >
             <Bell className="w-4 h-4 text-[#F36F00]" />
             <span className="hidden sm:inline">Hộp thư</span>
@@ -751,10 +766,10 @@ export default function App() {
             type="button"
             onClick={handleLogout}
             aria-label="Đăng xuất hoặc đổi tài khoản"
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-white border border-slate-200 hover:bg-red-50 hover:border-red-300 hover:text-red-700 text-slate-600 font-semibold transition-colors"
+            className="inline-flex items-center gap-1.5 px-2.5 sm:px-3.5 py-2 rounded-lg bg-white border border-slate-200 hover:bg-red-50 hover:border-red-300 hover:text-red-700 text-slate-600 font-semibold transition-colors"
           >
             <LogOut className="w-4 h-4" />
-            <span>Đổi tài khoản</span>
+            <span className="hidden sm:inline">Đổi tài khoản</span>
           </button>
         </div>
       </header>
@@ -787,6 +802,10 @@ export default function App() {
         {round && (activeView === 'dashboard' || activeView === 'admin') && (
           <DashboardAndAdmin
             mode={activeView === 'admin' ? 'admin' : 'dashboard'}
+            onSelectMode={(m) => {
+              setActiveView(m);
+              localStorage.setItem('cres_active_view', m);
+            }}
             onRefreshGlobal={fetchRoundAndDemoAccounts}
           />
         )}

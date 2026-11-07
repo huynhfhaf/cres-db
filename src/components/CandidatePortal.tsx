@@ -31,6 +31,7 @@ import {
   StatusLegendPanel,
   formatRemainingTime,
 } from './StatusBadge';
+import { UserRoleBadge } from './UserRoleBadge';
 
 interface CandidatePortalProps {
   user: User;
@@ -446,9 +447,12 @@ export function CandidatePortal({
         <div className="bg-white border border-slate-200 rounded-xl p-6">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pb-4 mb-4 border-b border-slate-200">
             <div>
-              <h2 className="text-lg font-bold text-[#1E293B]">
-                Đơn Đăng Ký Ứng Tuyển Cộng Tác Viên Câu lạc bộ Thương mại C-RES
-              </h2>
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-lg font-bold text-[#1E293B]">
+                  Đơn Đăng Ký Ứng Tuyển Cộng Tác Viên Câu lạc bộ Thương mại C-RES
+                </h2>
+                <UserRoleBadge role="candidate" size="sm" />
+              </div>
               <p className="text-xs text-slate-600 mt-0.5">
                 Bạn vui lòng điền thông tin cá nhân và chọn ban nguyện vọng bên dưới (dữ liệu tự động lưu vào Sheet hồ sơ).
               </p>
@@ -659,6 +663,7 @@ export function CandidatePortal({
                   <h2 className="text-lg font-bold text-slate-900">
                     Hồ sơ của tôi: {app.full_name}
                   </h2>
+                  <UserRoleBadge role="candidate" size="sm" />
                   <StatusBadge status={app.status} viewerRole="candidate" />
                   <EndReasonBadge reason={app.end_reason} />
                 </div>

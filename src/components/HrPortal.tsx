@@ -30,6 +30,7 @@ import {
   StatusLegendPanel,
   formatRemainingTime,
 } from './StatusBadge';
+import { UserRoleBadge } from './UserRoleBadge';
 
 interface HrPortalProps {
   round: RecruitmentRound;
@@ -520,6 +521,7 @@ export function HrPortal({
         </div>
 
         <div className="flex items-center gap-1.5 pr-1">
+          <UserRoleBadge role="hr" size="sm" className="mr-1" />
           <button
             type="button"
             onClick={() => handleHrTimeTravel(1)}

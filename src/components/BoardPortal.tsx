@@ -20,6 +20,7 @@ import type {
   ApplicationStatus,
 } from '../types';
 import { StatusBadge, StatusLegendPanel } from './StatusBadge';
+import { UserRoleBadge } from './UserRoleBadge';
 
 interface BoardPortalProps {
   onRefreshGlobal: () => void;
@@ -477,6 +478,7 @@ export function BoardPortal({ onRefreshGlobal }: BoardPortalProps) {
         </div>
 
         <div className="flex items-center gap-2 pr-1">
+          <UserRoleBadge role="board" size="sm" />
           {pendingFinalizeList.length > 0 && (
             <button
               type="button"
@@ -524,11 +526,12 @@ export function BoardPortal({ onRefreshGlobal }: BoardPortalProps) {
       <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
           <div>
-            <h2 className="text-base font-bold text-[#1E293B] flex items-center gap-2">
+            <h2 className="text-base font-bold text-[#1E293B] flex flex-wrap items-center gap-2">
               <Award className="w-5 h-5 text-[#F36F00]" />
               <span>
                 BCN Chấm điểm & Xét tuyển — Câu lạc bộ Thương mại C-RES
               </span>
+              <UserRoleBadge role="board" size="sm" />
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
               Đang chờ chấm điểm xét tuyển: <strong className="text-[#F36F00]">{pendingScoringList.length} ứng viên</strong> · Đã có kết quả: <strong className="text-emerald-700">{passedResultList.length} Đã đậu</strong>, <strong className="text-red-600">{failedResultList.length} Đã loại</strong>
