@@ -888,11 +888,22 @@ export function CandidatePortal({
                 </div>
               )}
 
+              {/* Available Interview Slots Grid Header Note */}
+              <div className="bg-blue-50/70 border border-blue-200 rounded-xl p-3.5 text-xs text-blue-950 flex flex-col sm:flex-row sm:items-center justify-between gap-2 shadow-2xs">
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-blue-900">💡 Chọn ca phỏng vấn:</span>
+                  <span>Chỗ còn trống = Tổng sức chứa − Đã giữ chỗ − Ghế dự trữ.</span>
+                </div>
+                <span className="text-[11px] text-blue-700 font-medium">
+                  Hệ thống tự động bảo lưu ghế dự trữ và cập nhật số chỗ theo thời gian thực
+                </span>
+              </div>
+
               {/* Available Interview Slots Grid */}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3.5">
                 {slots.map((slot) => {
                   const isMySlot = app.booking?.slot_id === slot.id;
-                  const bookedCnt = slot.booked_count || 0;
+                  const bookedCnt = slot.booked_count !== undefined ? slot.booked_count : (slot.bookings?.length || 0);
                   const reservedCnt = slot.reserved_seats || 0;
                   const rem =
                     slot.available_seats !== undefined
@@ -906,10 +917,10 @@ export function CandidatePortal({
                       key={slot.id}
                       className={`p-4 rounded-xl border flex flex-col justify-between gap-3 ${
                         isMySlot
-                          ? 'bg-blue-50/60 border-blue-400'
+                          ? 'bg-blue-50/60 border-blue-400 ring-2 ring-blue-300'
                           : isPast || isFull
-                          ? 'bg-slate-50 border-slate-200 opacity-75'
-                          : 'bg-white border-slate-200 hover:border-blue-300'
+                          ? 'bg-slate-50 border-slate-200 opacity-80'
+                          : 'bg-white border-slate-200 hover:border-blue-300 shadow-2xs'
                       }`}
                     >
                       <div className="space-y-1.5">
@@ -920,11 +931,13 @@ export function CandidatePortal({
                             })}
                           </span>
                           <span
-                            className={`text-xs font-mono font-semibold tabular-nums ${
-                              isFull && !isMySlot ? 'text-red-600' : 'text-blue-700'
+                            className={`text-xs font-mono font-bold tabular-nums px-2 py-0.5 rounded ${
+                              isFull && !isMySlot
+                                ? 'bg-red-50 text-red-700 border border-red-200'
+                                : 'bg-blue-50 text-blue-800 border border-blue-200'
                             }`}
                           >
-                            Còn {rem}/{slot.capacity} chỗ
+                            {rem > 0 ? `Còn ${rem}/${slot.capacity} chỗ` : `Kín chỗ (0/${slot.capacity})`}
                           </span>
                         </div>
                         <div className="text-sm font-bold text-slate-900 tabular-nums">
@@ -940,9 +953,36 @@ export function CandidatePortal({
                             timeZone: 'Asia/Ho_Chi_Minh',
                           })}
                         </div>
-                        <div className="text-xs text-slate-600">{slot.location_or_link}</div>
-                        <div className="text-[11px] font-mono text-slate-500 pt-1 border-t border-slate-100 tabular-nums">
-                          Đã đặt: {bookedCnt} · Dự trữ: {reservedCnt} · Trống: {rem}
+                        <div className="text-xs text-slate-600 font-medium">{slot.location_or_link}</div>
+
+                        {/* Breakdown for Candidate (No PII) */}
+                        <div className="pt-2 border-t border-slate-100 space-y-1.5">
+                          <div className="grid grid-cols-3 gap-1 text-center text-[10px] tabular-nums">
+                            <div className="bg-slate-50 border border-slate-100 rounded p-1">
+                              <div className="text-slate-400 font-medium">Sức chứa</div>
+                              <div className="font-bold text-slate-700">{slot.capacity}</div>
+                            </div>
+                            <div className="bg-blue-50/70 border border-blue-100 rounded p-1">
+                              <div className="text-blue-600 font-medium">Đã đặt</div>
+                              <div className="font-bold text-blue-800">{bookedCnt}</div>
+                            </div>
+                            <div
+                              className={`rounded p-1 border ${
+                                rem > 0
+                                  ? 'bg-emerald-50/70 border-emerald-200 text-emerald-800'
+                                  : 'bg-red-50/70 border-red-200 text-red-800'
+                              }`}
+                            >
+                              <div className="font-medium">{rem > 0 ? 'Còn trống' : 'Hết chỗ'}</div>
+                              <div className="font-bold">{rem}</div>
+                            </div>
+                          </div>
+                          {reservedCnt > 0 && (
+                            <div className="text-[10px] text-slate-500 font-mono text-center flex items-center justify-center gap-1">
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />
+                              <span>Dự trữ: {reservedCnt} ghế (chưa mở)</span>
+                            </div>
+                          )}
                         </div>
                       </div>
 

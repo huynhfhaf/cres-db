@@ -10,6 +10,8 @@ import {
   XCircle,
   Clock,
   RotateCcw,
+  Info,
+  Users,
 } from 'lucide-react';
 import { apiRequest } from '../api';
 import type {
@@ -83,6 +85,7 @@ export function BoardPortal({ onRefreshGlobal }: BoardPortalProps) {
     end_at: '2026-11-06T10:00',
     location_or_link: 'Phòng B204 - Đại học Kinh tế - Đại học Đà Nẵng',
     capacity: 6,
+    reserved_seats: 0,
   });
 
   // Scorecard Grading Modal
@@ -861,6 +864,9 @@ export function BoardPortal({ onRefreshGlobal }: BoardPortalProps) {
                 <Calendar className="w-5 h-5 text-[#F36F00]" />
                 <span>Lịch phỏng vấn & Chấm điểm theo ca (Chỉ hiển thị ứng viên chờ chấm)</span>
               </h2>
+              <p className="text-xs text-slate-500 mt-1">
+                Theo dõi tiến độ chấm điểm, điểm danh và quản lý sức chứa ca phỏng vấn thời gian thực.
+              </p>
             </div>
             <button
               type="button"
@@ -872,6 +878,23 @@ export function BoardPortal({ onRefreshGlobal }: BoardPortalProps) {
             </button>
           </div>
 
+          {/* Formula & Policy Note for Seat Management */}
+          <div className="bg-slate-50 border border-slate-200/90 rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-slate-600">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <span className="font-bold text-[#1E293B] flex items-center gap-1.5">
+                <Info className="w-4 h-4 text-[#F36F00]" />
+                Công thức tính chỗ trống (Backend):
+              </span>
+              <span className="font-mono bg-white px-2.5 py-1 rounded-md border border-slate-200 text-slate-800 font-semibold text-[11px] shadow-2xs">
+                Số chỗ còn trống = Tổng sức chứa − Đang giữ chỗ − Ghế dự trữ
+              </span>
+            </div>
+            <div className="text-[11px] text-slate-500 flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
+              <span>Ghế dự trữ được lưu trữ an toàn tại hệ thống, chưa mở đăng ký cho ứng viên.</span>
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {slots.map((slot) => {
               const allSlotBookings = slot.bookings || [];
@@ -879,7 +902,7 @@ export function BoardPortal({ onRefreshGlobal }: BoardPortalProps) {
                 PENDING_SCORING_STATUSES.includes(b.status)
               );
               const finishedSlotCount = allSlotBookings.length - pendingSlotBookings.length;
-              const bookedCnt = slot.booked_count || 0;
+              const bookedCnt = slot.booked_count !== undefined ? slot.booked_count : allSlotBookings.length;
               const reservedCnt = slot.reserved_seats || 0;
               const availCnt =
                 slot.available_seats !== undefined
@@ -887,7 +910,8 @@ export function BoardPortal({ onRefreshGlobal }: BoardPortalProps) {
                   : Math.max(0, slot.capacity - bookedCnt - reservedCnt);
 
               return (
-                <div key={slot.id} className="bg-white border border-slate-200 rounded-xl p-5 space-y-3">
+                <div key={slot.id} className="bg-white border border-slate-200 rounded-xl p-5 space-y-3.5 shadow-2xs">
+                  {/* Slot Header */}
                   <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
                     <div>
                       <div className="text-sm font-bold text-slate-900 tabular-nums">
@@ -901,14 +925,134 @@ export function BoardPortal({ onRefreshGlobal }: BoardPortalProps) {
                           timeZone: 'Asia/Ho_Chi_Minh',
                         })}
                       </div>
-                      <div className="text-xs text-slate-600 mt-0.5">{slot.location_or_link}</div>
-                      <div className="text-[11px] font-mono text-slate-500 mt-0.5 tabular-nums">
-                        Tổng: {slot.capacity} ghế · Đã đặt: {bookedCnt} · Dự trữ: {reservedCnt} · Trống: {availCnt}
-                      </div>
+                      <div className="text-xs text-slate-600 mt-0.5 font-medium">{slot.location_or_link}</div>
                     </div>
-                    <span className="px-2.5 py-1 bg-orange-50 border border-orange-200 rounded-lg text-xs font-mono font-bold text-[#F36F00] tabular-nums">
-                      Còn {availCnt}/{slot.capacity} chỗ · Chờ chấm: {pendingSlotBookings.length}
+                    <span
+                      className={`px-2.5 py-1 rounded-lg text-xs font-mono font-bold tabular-nums border ${
+                        availCnt > 0
+                          ? 'bg-orange-50 border-orange-200 text-[#F36F00]'
+                          : 'bg-slate-100 border-slate-300 text-slate-700'
+                      }`}
+                    >
+                      {availCnt > 0 ? `Còn ${availCnt}/${slot.capacity} chỗ` : `Kín chỗ (0/${slot.capacity})`} · Chờ chấm: {pendingSlotBookings.length}
                     </span>
+                  </div>
+
+                  {/* 4-part Seat Breakdown Grid */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-200 flex flex-col justify-between">
+                      <span className="text-[10px] uppercase font-bold tracking-wider text-slate-500">
+                        1. Tổng sức chứa
+                      </span>
+                      <span className="text-base font-bold text-slate-900 tabular-nums mt-0.5">
+                        {slot.capacity} <span className="text-xs font-normal text-slate-500">ghế</span>
+                      </span>
+                    </div>
+
+                    <div className="p-2.5 rounded-lg bg-blue-50/70 border border-blue-200 flex flex-col justify-between">
+                      <span className="text-[10px] uppercase font-bold tracking-wider text-blue-700">
+                        2. Đang giữ chỗ
+                      </span>
+                      <span className="text-base font-bold text-blue-900 tabular-nums mt-0.5">
+                        {bookedCnt} <span className="text-xs font-normal text-blue-600">ghế</span>
+                      </span>
+                    </div>
+
+                    <div className="p-2.5 rounded-lg bg-amber-50/70 border border-amber-200 flex flex-col justify-between">
+                      <span className="text-[10px] uppercase font-bold tracking-wider text-amber-700">
+                        3. Ghế dự trữ
+                      </span>
+                      <span className="text-base font-bold text-amber-900 tabular-nums mt-0.5">
+                        {reservedCnt} <span className="text-xs font-normal text-amber-600">ghế</span>
+                      </span>
+                    </div>
+
+                    <div
+                      className={`p-2.5 rounded-lg border flex flex-col justify-between ${
+                        availCnt > 0
+                          ? 'bg-emerald-50/70 border-emerald-300'
+                          : 'bg-red-50/70 border-red-300'
+                      }`}
+                    >
+                      <span
+                        className={`text-[10px] uppercase font-bold tracking-wider ${
+                          availCnt > 0 ? 'text-emerald-700' : 'text-red-700'
+                        }`}
+                      >
+                        4. Còn trống
+                      </span>
+                      <span
+                        className={`text-base font-bold tabular-nums mt-0.5 ${
+                          availCnt > 0 ? 'text-emerald-900' : 'text-red-900'
+                        }`}
+                      >
+                        {availCnt}{' '}
+                        <span
+                          className={`text-xs font-normal ${
+                            availCnt > 0 ? 'text-emerald-600' : 'text-red-600'
+                          }`}
+                        >
+                          chỗ
+                        </span>
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Proportional Seat Capacity Bar & Formula Note */}
+                  <div className="bg-slate-50/80 rounded-lg p-2.5 border border-slate-100 space-y-1.5 text-xs">
+                    <div className="flex items-center justify-between text-[11px] text-slate-600">
+                      <span className="font-semibold text-slate-700">Phân bổ sức chứa ca:</span>
+                      <span className="font-mono text-slate-600 tabular-nums font-medium">
+                        {slot.capacity} = {bookedCnt} (đã đặt) + {reservedCnt} (dự trữ) + {availCnt} (trống)
+                      </span>
+                    </div>
+                    <div
+                      className="w-full bg-slate-200 rounded-full h-2 flex overflow-hidden"
+                      title={`Tổng ${slot.capacity} ghế: Đang giữ chỗ ${bookedCnt}, Ghế dự trữ ${reservedCnt}, Còn trống ${availCnt}`}
+                    >
+                      {bookedCnt > 0 && (
+                        <div
+                          style={{ width: `${(bookedCnt / slot.capacity) * 100}%` }}
+                          className="bg-blue-600 h-full transition-all"
+                          title={`Đang giữ chỗ: ${bookedCnt}/${slot.capacity} ghế`}
+                        />
+                      )}
+                      {reservedCnt > 0 && (
+                        <div
+                          style={{ width: `${(reservedCnt / slot.capacity) * 100}%` }}
+                          className="bg-amber-400 h-full transition-all"
+                          title={`Ghế dự trữ: ${reservedCnt}/${slot.capacity} ghế`}
+                        />
+                      )}
+                      {availCnt > 0 && (
+                        <div
+                          style={{ width: `${(availCnt / slot.capacity) * 100}%` }}
+                          className="bg-emerald-500 h-full transition-all"
+                          title={`Còn trống: ${availCnt}/${slot.capacity} chỗ`}
+                        />
+                      )}
+                    </div>
+                    <div className="flex flex-wrap items-center justify-between gap-1 text-[10px] text-slate-500 pt-0.5">
+                      <div className="flex items-center gap-2.5">
+                        <span className="inline-flex items-center gap-1">
+                          <span className="w-2 h-2 rounded-full bg-blue-600 shrink-0" />
+                          <span>Đã đặt ({bookedCnt})</span>
+                        </span>
+                        <span className="inline-flex items-center gap-1">
+                          <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
+                          <span>Dự trữ ({reservedCnt})</span>
+                        </span>
+                        <span className="inline-flex items-center gap-1">
+                          <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+                          <span>Còn trống ({availCnt})</span>
+                        </span>
+                      </div>
+                      {reservedCnt > 0 && (
+                        <span className="text-amber-700 italic">
+                          ({reservedCnt} ghế dự trữ chưa mở đăng ký)
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   {pendingSlotBookings.length === 0 ? (
@@ -1288,20 +1432,49 @@ export function BoardPortal({ onRefreshGlobal }: BoardPortalProps) {
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg"
                 />
               </div>
-              <div>
-                <label htmlFor="slot-cap" className="block font-semibold text-slate-700 mb-1">
-                  Sức chứa tối đa (số ứng viên):
-                </label>
-                <input
-                  id="slot-cap"
-                  type="number"
-                  min="1"
-                  max="30"
-                  required
-                  value={newSlot.capacity}
-                  onChange={(e) => setNewSlot({ ...newSlot, capacity: Number(e.target.value) })}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg font-mono"
-                />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label htmlFor="slot-cap" className="block font-semibold text-slate-700 mb-1">
+                    Tổng sức chứa (ghế):
+                  </label>
+                  <input
+                    id="slot-cap"
+                    type="number"
+                    min="1"
+                    max="50"
+                    required
+                    value={newSlot.capacity}
+                    onChange={(e) =>
+                      setNewSlot({ ...newSlot, capacity: Math.max(1, Number(e.target.value)) })
+                    }
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg font-mono"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="slot-reserved" className="block font-semibold text-slate-700 mb-1">
+                    Ghế dự trữ (chưa mở):
+                  </label>
+                  <input
+                    id="slot-reserved"
+                    type="number"
+                    min="0"
+                    max={Math.max(0, newSlot.capacity - 1)}
+                    value={newSlot.reserved_seats}
+                    onChange={(e) =>
+                      setNewSlot({
+                        ...newSlot,
+                        reserved_seats: Math.max(0, Number(e.target.value)),
+                      })
+                    }
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg font-mono"
+                  />
+                </div>
+              </div>
+              <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-[11px] text-slate-600 space-y-0.5">
+                <div className="font-semibold text-slate-700">Chỗ trống mở đăng ký ban đầu:</div>
+                <div className="font-mono text-[#F36F00] font-bold">
+                  {Math.max(0, newSlot.capacity - (newSlot.reserved_seats || 0))} chỗ trống = {newSlot.capacity} (sức chứa) − {newSlot.reserved_seats || 0} (dự trữ)
+                </div>
               </div>
               <div className="flex items-center justify-end gap-2 pt-2">
                 <button
