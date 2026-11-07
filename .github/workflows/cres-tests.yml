@@ -22,7 +22,7 @@ jobs:
       TIME_SCALE: "1"
       JWT_SECRET: "cres-ci-test-only-not-for-production"
       GEMINI_API_KEY: ""
-      CRES_DB_PATH: ${{ runner.temp }}/cres-ci.db
+      CRES_DB_PATH: "/tmp/cres-ci.db"
 
     steps:
       - name: Lay ma nguon
