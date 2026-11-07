@@ -24,7 +24,13 @@ import type {
   User,
 } from '../types';
 import { END_STATUSES } from '../types';
-import { StatusBadge, EndReasonBadge, formatRemainingTime } from './StatusBadge';
+import {
+  StatusBadge,
+  EndReasonBadge,
+  StatusExplanation,
+  StatusLegendPanel,
+  formatRemainingTime,
+} from './StatusBadge';
 
 interface CandidatePortalProps {
   user: User;
@@ -647,13 +653,13 @@ export function CandidatePortal({
         <div className="space-y-6">
           {/* Status Header Card */}
           <div className="bg-white border border-slate-200 rounded-xl p-6">
-            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 pb-6 border-b border-slate-200">
-              <div className="space-y-1.5">
+            <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4 pb-6 border-b border-slate-200">
+              <div className="space-y-2 flex-1">
                 <div className="flex flex-wrap items-center gap-2.5">
                   <h2 className="text-lg font-bold text-slate-900">
                     Hồ sơ của tôi: {app.full_name}
                   </h2>
-                  <StatusBadge status={app.status} />
+                  <StatusBadge status={app.status} viewerRole="candidate" />
                   <EndReasonBadge reason={app.end_reason} />
                 </div>
                 <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600 tabular-nums">
@@ -669,6 +675,7 @@ export function CandidatePortal({
                     </>
                   )}
                 </div>
+                <StatusExplanation status={app.status} viewerRole="candidate" className="mt-2" />
               </div>
 
               {/* Withdraw Button available at ANY step (including after department assignment to test revoking assignment) */}
@@ -711,6 +718,9 @@ export function CandidatePortal({
               })}
             </div>
           </div>
+
+          {/* Collapsible Status Guide for Candidate */}
+          <StatusLegendPanel viewerRole="candidate" />
 
           {/* DYNAMIC ACTION PANEL BASED ON CURRENT STATE */}
 

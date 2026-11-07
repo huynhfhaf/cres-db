@@ -23,7 +23,13 @@ import type {
   AuditLogItem,
 } from '../types';
 import { STATUS_LABELS } from '../types';
-import { StatusBadge, EndReasonBadge, formatRemainingTime } from './StatusBadge';
+import {
+  StatusBadge,
+  EndReasonBadge,
+  StatusExplanation,
+  StatusLegendPanel,
+  formatRemainingTime,
+} from './StatusBadge';
 
 interface HrPortalProps {
   round: RecruitmentRound;
@@ -554,7 +560,10 @@ export function HrPortal({
 
       {/* TAB 1: SPREADSHEET VIEW */}
       {activeTab === 'spreadsheet' && (
-        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+        <div className="space-y-4">
+          <StatusLegendPanel viewerRole="hr" />
+
+          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
           <div className="p-4 border-b border-slate-200 bg-slate-50/60 flex flex-wrap items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-2.5 flex-1">
               <div className="relative min-w-[220px]">
@@ -654,7 +663,7 @@ export function HrPortal({
                   <th className="py-2.5 px-3">MSSV · Lớp</th>
                   <th className="py-2.5 px-3">Nguyện vọng 1 / 2</th>
                   <th className="py-2.5 px-3 text-right">Điểm hồ sơ</th>
-                  <th className="py-2.5 px-3">Trạng thái</th>
+                  <th className="py-2.5 px-3">Trạng thái & Bước tiếp theo</th>
                   <th className="py-2.5 px-3">Thời hạn</th>
                   <th className="py-2.5 px-3 text-right">Thao tác</th>
                 </tr>
@@ -723,7 +732,7 @@ export function HrPortal({
                           )}
                         </td>
                         <td className="py-2.5 px-3">
-                          <StatusBadge status={app.status} />
+                          <StatusBadge status={app.status} viewerRole="hr" showDescription />
                         </td>
                         <td className="py-2.5 px-3 font-mono text-[11px] tabular-nums">
                           {activeDeadline ? (
@@ -753,6 +762,7 @@ export function HrPortal({
               </tbody>
             </table>
           </div>
+          </div>
         </div>
       )}
 
@@ -780,7 +790,7 @@ export function HrPortal({
                         <span className="text-xs font-mono text-slate-500">
                           {app.student_id} · {app.class_name}
                         </span>
-                        <StatusBadge status={app.status} />
+                        <StatusBadge status={app.status} viewerRole="hr" />
                       </div>
                       <div className="text-xs text-slate-600 mt-1">
                         Nguyện vọng 1: <strong>{app.first_choice_name}</strong>
@@ -793,6 +803,7 @@ export function HrPortal({
                       </span>
                     </div>
                   </div>
+                  <StatusExplanation status={app.status} viewerRole="hr" />
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
                     <div className="bg-slate-50 border border-slate-200 rounded-lg p-3.5 space-y-1">
@@ -880,16 +891,18 @@ export function HrPortal({
               {nearThresholdList.map((app) => (
                 <div key={app.id} className="bg-white border border-rose-200 rounded-xl p-5 space-y-3">
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                    <div>
+                    <div className="flex flex-wrap items-center gap-2">
                       <span className="text-base font-bold text-slate-900">{app.full_name}</span>
-                      <span className="text-xs font-mono text-slate-500 ml-2">
+                      <span className="text-xs font-mono text-slate-500">
                         ({app.student_id} · {app.class_name} · NV1: {app.first_choice_name})
                       </span>
+                      <StatusBadge status={app.status} viewerRole="hr" />
                     </div>
                     <span className="px-3 py-1 bg-rose-50 border border-rose-200 rounded-lg text-xs font-mono font-bold text-rose-800 tabular-nums">
                       Điểm sơ loại: {app.screening_score}đ (Sát ngưỡng Y={round.threshold_y}đ)
                     </span>
                   </div>
+                  <StatusExplanation status={app.status} viewerRole="hr" />
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
                     <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
                       <strong>Kinh nghiệm:</strong> {app.experience}
@@ -1313,9 +1326,9 @@ export function HrPortal({
         >
           <div className="bg-white border border-slate-200 rounded-xl max-w-3xl w-full max-h-[88vh] flex flex-col overflow-hidden shadow-xl">
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-slate-50">
-              <div className="flex items-center gap-2.5">
+              <div className="flex flex-wrap items-center gap-2.5">
                 <h3 className="text-base font-bold text-slate-900">{detailApp.full_name}</h3>
-                <StatusBadge status={detailApp.status} />
+                <StatusBadge status={detailApp.status} viewerRole="hr" />
                 <EndReasonBadge reason={detailApp.end_reason} />
               </div>
               <button
@@ -1329,6 +1342,7 @@ export function HrPortal({
             </div>
 
             <div className="p-6 overflow-y-auto space-y-5 text-xs">
+              <StatusExplanation status={detailApp.status} viewerRole="hr" />
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-50 p-4 rounded-lg border border-slate-200">
                 <div>
                   <div className="text-slate-500">MSSV / Lớp</div>

@@ -24,8 +24,7 @@ import type {
   NotificationItem,
   ApplicationStatus,
 } from './types';
-import { STATUS_LABELS } from './types';
-import { StatusBadge } from './components/StatusBadge';
+import { StatusBadge, getStatusMeta } from './components/StatusBadge';
 import { CandidatePortal } from './components/CandidatePortal';
 import { HrPortal } from './components/HrPortal';
 import { BoardPortal } from './components/BoardPortal';
@@ -248,7 +247,9 @@ export default function App() {
     const filteredLoginCandidates = demoCandidates.filter((c) => {
       if (!candidateSearchQuery.trim()) return true;
       const q = candidateSearchQuery.toLowerCase();
-      const statusLabel = (STATUS_LABELS[c.status as ApplicationStatus] || c.status).toLowerCase();
+      const statusLabel = c.status
+        ? getStatusMeta(c.status as ApplicationStatus, 'candidate').label.toLowerCase()
+        : 'chưa nộp đơn';
       return (
         c.full_name.toLowerCase().includes(q) ||
         c.email.toLowerCase().includes(q) ||
@@ -441,7 +442,7 @@ export default function App() {
                             </div>
                             <div className="shrink-0 flex items-center gap-1.5">
                               {c.status ? (
-                                <StatusBadge status={c.status as ApplicationStatus} />
+                                <StatusBadge status={c.status as ApplicationStatus} viewerRole="candidate" />
                               ) : (
                                 <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-100 text-slate-600 border border-slate-200">
                                   Chưa nộp đơn

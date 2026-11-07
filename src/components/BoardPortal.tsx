@@ -19,7 +19,7 @@ import type {
   Application,
   ApplicationStatus,
 } from '../types';
-import { StatusBadge } from './StatusBadge';
+import { StatusBadge, StatusLegendPanel } from './StatusBadge';
 
 interface BoardPortalProps {
   onRefreshGlobal: () => void;
@@ -560,6 +560,9 @@ export function BoardPortal({ onRefreshGlobal }: BoardPortalProps) {
         </div>
       </div>
 
+      {/* Collapsible Status Guide for Board (BCN) */}
+      <StatusLegendPanel viewerRole="board" />
+
       {/* TAB 1: CHỜ CHẤM ĐIỂM XÉT TUYỂN (STRICTLY ONLY PENDING / REVIEWING CANDIDATES) */}
       {activeTab === 'pending' && (
         <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
@@ -582,7 +585,7 @@ export function BoardPortal({ onRefreshGlobal }: BoardPortalProps) {
                   <th className="py-2.5 px-3">Nguyện vọng 1 / 2</th>
                   <th className="py-2.5 px-3">Điểm danh & Phiếu chấm</th>
                   <th className="py-2.5 px-3 text-right">Điểm trung bình</th>
-                  <th className="py-2.5 px-3">Trạng thái</th>
+                  <th className="py-2.5 px-3">Trạng thái & Bước tiếp theo</th>
                   <th className="py-2.5 px-3 text-right">Thao tác xét tuyển</th>
                 </tr>
               </thead>
@@ -639,7 +642,7 @@ export function BoardPortal({ onRefreshGlobal }: BoardPortalProps) {
                           )}
                         </td>
                         <td className="py-3 px-3">
-                          <StatusBadge status={cand.status} />
+                          <StatusBadge status={cand.status} viewerRole="board" showDescription />
                         </td>
                         <td className="py-3 px-3 text-right">
                           <div className="flex items-center justify-end gap-1.5 flex-wrap">
@@ -754,7 +757,7 @@ export function BoardPortal({ onRefreshGlobal }: BoardPortalProps) {
                   <th className="py-2.5 px-3">Nguyện vọng 1 / 2</th>
                   <th className="py-2.5 px-3 text-right">Điểm tổng hợp</th>
                   <th className="py-2.5 px-3">Kết quả xét tuyển</th>
-                  <th className="py-2.5 px-3">Trạng thái hồ sơ</th>
+                  <th className="py-2.5 px-3">Trạng thái hồ sơ & Bước tiếp theo</th>
                   <th className="py-2.5 px-3 text-right">Thao tác</th>
                 </tr>
               </thead>
@@ -804,7 +807,7 @@ export function BoardPortal({ onRefreshGlobal }: BoardPortalProps) {
                           )}
                         </td>
                         <td className="py-3 px-3">
-                          <StatusBadge status={cand.status} />
+                          <StatusBadge status={cand.status} viewerRole="board" showDescription />
                         </td>
                         <td className="py-3 px-3 text-right">
                           <div className="flex items-center justify-end gap-1.5 flex-wrap">
